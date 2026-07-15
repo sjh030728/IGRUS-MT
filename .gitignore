@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 옵시디언이 보관함(docs/)에 만드는 설정 폴더.
+# workspace.json이 창을 옮길 때마다 바뀌어서 커밋 노이즈가 된다. 1인이라 설정 동기화 불필요.
+.obsidian/
+.env
+.env.local
+.DS_Store

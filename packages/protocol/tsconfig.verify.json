@@ -1,0 +1,11 @@
+{
+  /**
+   * verify.ts 전용. Node에서 실행되는 스크립트라 console/process가 필요하다.
+   * src/는 tsconfig.json이 맡고, 거기엔 Node 타입이 없다 (브라우저도 import하니까).
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "verify.ts"]
+}

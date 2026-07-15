@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+
+    /**
+     * ★types: [] 가 이 파일에서 제일 중요한 줄이다★
+     *
+     * 이 패키지는 서버(Node)와 빔/폰(브라우저)이 둘 다 import한다.
+     * @types/node를 넣으면 누군가 src/에 process.env나 Buffer를 쓸 수 있게 되고,
+     * 그건 서버에선 통과하고 브라우저 번들에서 터진다 — B가 W2에 이유 모를 에러를 본다.
+     *
+     * 비워두면 src/는 순수 TypeScript + Zod만 쓸 수 있다. 계약이 어디서든 돌아간다.
+     * (verify.ts는 console/process를 쓰므로 tsconfig.verify.json이 따로 맡는다.)
+     */
+    "types": []
+  },
+  "include": ["src/**/*.ts"]
+}
