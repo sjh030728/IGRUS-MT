@@ -139,11 +139,22 @@ export interface RoundSpec<TPlayPrompt = unknown> {
   countdownMs: number;
 }
 
-export interface ScoreResult<TReveal = unknown> {
+export interface ScoreResult {
   /** 배수 적용 전. 부호 있는 정수 — 배신 라운드는 음수가 난다. */
   baseDeltas: ReadonlyMap<TeamId, number>;
-  /** REVEAL에서 빔이 ★한 프레임에★ 그릴 것. 조별 순차 플립 금지 — "동시 공개"는 문자 그대로다. */
-  reveal: TReveal;
+  /**
+   * REVEAL에서 빔이 ★한 프레임에★ 그릴 것. 조별 순차 플립 금지 — "동시 공개"는 문자 그대로다.
+   *
+   * ★제네릭이 아니라 ContentChunks인 이유★ (단계 1에서 고침)
+   * 원래 TReveal = unknown 이었는데 코어가 그걸 쓸 수가 없었다:
+   *  - 빔이 받는 DisplayRoundView.content는 ContentChunks다. 빔은 DisplayChunk 말고
+   *    그릴 줄 아는 게 없고, 그게 청크 예산(MAX_CONTENT_CHUNKS)의 존재 이유다
+   *  - Game 유니온이 제네릭을 지운다(LockRevealGame<never, never>). 코어가 보는 reveal은 never다
+   *  - reveal은 와이어에 자기 표현이 없다 — content를 통하지 않으면 빔에 갈 경로가 없다
+   * 즉 제네릭이면 게임이 낸 리빌을 띄울 방법이 없다. displayPrompt.content가 이미
+   * ContentChunks인 것과 대칭을 맞춘다 — 문제도 리빌도 같은 어휘로 그린다.
+   */
+  reveal: ContentChunks;
   callouts: readonly Callout[];
 }
 
@@ -163,7 +174,7 @@ export interface LoadCtx {
  * onPhaseEnter / beforeLock 같은 걸 열어주면 거기로 3번째 게임 타입이 기어들어온다.
  * 훅이 필요한 게임은 LockReveal이 아니고, 그러면 CLAUDE.md에 따라 만들지 않는다.
  */
-export interface LockRevealGame<TPlayPrompt = unknown, TAnswer = unknown, TReveal = unknown> {
+export interface LockRevealGame<TPlayPrompt = unknown, TAnswer = unknown> {
   readonly gameId: GameId;
   readonly kind: 'LOCK_REVEAL';
   readonly title: string;
@@ -189,7 +200,7 @@ export interface LockRevealGame<TPlayPrompt = unknown, TAnswer = unknown, TRevea
    * LOCKED 진입 시 1회. 순수 + 결정적 (되감기/재시작 때 다시 돌아도 같은 답이 나와야 한다).
    * ★배수를 보지 못한다★ — 코어가 곱한다. 게임이 배수를 알면 두 곳에서 곱해진다.
    */
-  score(round: RoundSpec<TPlayPrompt>, bag: SubmissionBag<TAnswer>): ScoreResult<TReveal>;
+  score(round: RoundSpec<TPlayPrompt>, bag: SubmissionBag<TAnswer>): ScoreResult;
 }
 
 /**
@@ -232,5 +243,12 @@ export interface LiveGame<TPayload = TapTugPayload> {
 /**
  * ★게임 타입은 영원히 2개다★ CLAUDE.md 원칙 2: "3번째를 만들지 마라."
  * 코어가 kind로 분기하는 곳은 정확히 한 군데(세그먼트 러너)뿐이다.
+ *
+ * ★never가 아니라 unknown인 이유★ (단계 1에서 고침)
+ * 원래 <never, never, never>였는데 그러면 ★어떤 게임도 이 타입에 못 들어간다★.
+ * loadRounds가 Promise<readonly RoundSpec<TPlayPrompt>[]>를 반환하는데 이건 공변 위치라,
+ * RoundSpec<QuizPrompt>를 RoundSpec<never>에 넣으려면 QuizPrompt가 never에 대입돼야 한다.
+ * 그런 타입은 없다. 즉 레지스트리가 비어 있을 때만 컴파일되는 타입이었다.
+ * unknown은 반대 방향이라 전부 들어간다 — 지우개로 쓸 값은 바닥(never)이 아니라 천장(unknown)이다.
  */
-export type Game = LockRevealGame<never, never, never> | LiveGame;
+export type Game = LockRevealGame<unknown, unknown> | LiveGame;

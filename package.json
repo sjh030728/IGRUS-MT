@@ -6,6 +6,8 @@
     "apps/*"
   ],
   "scripts": {
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run build -w @mt/protocol && npm run typecheck --workspaces --if-present",
+    "verify": "npm run verify -w @mt/protocol"
   }
 }

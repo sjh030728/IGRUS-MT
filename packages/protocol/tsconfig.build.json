@@ -1,0 +1,27 @@
+/**
+ * 계약을 실제 JS로 내보내는 설정. `npm run build -w @mt/protocol`
+ *
+ * ★왜 빌드가 생겼나★
+ * 단계 0까진 소비자가 없어서 생 TS를 그대로 export해도 됐다(main: ./src/index.ts).
+ * 단계 1에서 서버(Nest)가 들어오면서 그게 안 된다 — Nest DI는 emitDecoratorMetadata를
+ * 요구하는데 esbuild/tsx가 그걸 안 하고, tsc로 컴파일하면 런타임에 node_modules의
+ * .ts를 못 읽는다. 빔/폰(Vite)은 생 TS도 먹지만 서버는 못 먹는다.
+ *
+ * 그래서 계약은 dist를 내보내고, 서버와 3뷰가 똑같이 그걸 import한다.
+ * 소비자가 둘(Node/브라우저)이라 어느 한쪽 사정에 맞추면 다른 쪽이 깨진다 —
+ * tsconfig.json의 "types: []" 주석이 말하는 것과 같은 이유다.
+ *
+ * base tsconfig는 noEmit이라 타입체크 전용으로 남긴다. 여기서만 내보낸다.
+ */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*.ts"]
+}
