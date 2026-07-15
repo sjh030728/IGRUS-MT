@@ -29,7 +29,17 @@ export class LedgerService {
   private readonly entries: LedgerEntry[] = [];
   private nextSeq = 1;
 
-  /** seq는 원장이 매긴다 (ledger.ts: "DB가 매긴다"). 호출자는 못 정한다. */
+  /**
+   * seq는 원장이 매긴다 (ledger.ts: "DB가 매긴다"). 호출자는 못 정한다.
+   *
+   * ★이걸 DB로 돌리는 순간 docs/program-ops.md에 "서버가 죽으면" 절차가 필요해진다★
+   * 지금은 못 쓴다 — 복구가 없으니 쓸 내용이 거짓이 된다. 복구를 만드는 게 이 함수라
+   * 리마인더를 여기 둔다. 사람이 기억할 일이 아니다 (`0012`).
+   *
+   * 쓸 내용은 이미 정해져 있다: **재시작만 한다 → 점수판을 본다 → 이상하면 낮 점수를
+   * 다시 넣는다.** 세 줄이면 되고 원장이 뭔지 몰라도 안전하다 — SEED가 set이라
+   * 두 번 넣어도 두 배가 안 되기 때문이다(`totals()` 아래).
+   */
   append(entry: NewLedgerEntry): LedgerEntry {
     const withSeq = { ...entry, seq: this.nextSeq++ } as LedgerEntry;
     this.entries.push(withSeq);

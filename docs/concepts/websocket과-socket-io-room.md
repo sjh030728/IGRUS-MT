@@ -5,7 +5,7 @@ tags:
 
 # WebSocket과 Socket.IO room
 
-> **스텁.** `/learn websocket` 으로 물어보면 채워진다. #스텁/당일
+> **스텁.** `/learn websocket` 으로 물어보면 채워진다. #스텁
 
 **한 줄:** 연결을 열어둔 채 서버도 먼저 말을 걸 수 있게 하는 프로토콜. room은 연결들을
 그룹으로 묶어 "빔한테만 보내기"를 가능하게 하는 Socket.IO 기능.
