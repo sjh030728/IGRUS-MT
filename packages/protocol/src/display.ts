@@ -111,7 +111,13 @@ export type DisplayRoundView = z.infer<typeof DisplayRoundView>;
  * BLACK 말고 전부 scoreboard를 필수로 요구한다 → "점수판 상시 노출"이 타입이 된다.
  */
 export const DisplayState = z.discriminatedUnion('mode', [
-  /** 패닉 킬. 카톡 알림이 빔에 뜰 때의 백스톱. 현장 체크리스트 항목의 소프트웨어판. */
+  /**
+   * 패닉 킬. 카톡 알림이 빔에 뜰 때의 백스톱. 현장 체크리스트 항목의 소프트웨어판.
+   *
+   * ★나머지 3개와 종류가 다르다★ SCOREBOARD_FULL/AWARD/ROUND는 세그먼트에서 파생된 상태고,
+   * BLACK은 그 파생 위에 덮인 오버라이드(HostCmd DISPLAY_BLACKOUT)가 투영된 것이다.
+   * 그래서 여기 필드가 없다 — 덮을 뿐 자리를 뺏지 않으니 복원할 정보도 없다.
+   */
   z.object({ mode: z.literal('BLACK') }),
   /** 8:00 낮 점수 공개 / 8:44 시상. */
   z.object({

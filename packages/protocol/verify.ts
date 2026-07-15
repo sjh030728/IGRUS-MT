@@ -36,6 +36,20 @@ ok('SET_MULTIPLIER m=99 거절 (배수는 1|2뿐)', !HostCmd.safeParse({ c: 'SET
 ok('ADJUST reason 없으면 거절 (아카이브가 이야기가 되게)', !HostCmd.safeParse({ c: 'ADJUST', deltas: {} }).success);
 ok('없는 명령 거절', !HostCmd.safeParse({ c: 'DELETE_EVERYTHING' }).success);
 ok('SET_POINTS 음수 거절', !HostCmd.safeParse({ c: 'SET_POINTS', basePoints: -100 }).success);
+ok('DISPLAY_BLACKOUT on=true 통과 (패닉 킬)', HostCmd.safeParse({ c: 'DISPLAY_BLACKOUT', on: true }).success);
+ok('DISPLAY_BLACKOUT on=false 통과 — 킬은 왕복이어야 한다', HostCmd.safeParse({ c: 'DISPLAY_BLACKOUT', on: false }).success);
+ok('DISPLAY_BLACKOUT on 없으면 거절 (토글 아님 — 두 번 눌러도 같은 결과여야 한다)', !HostCmd.safeParse({ c: 'DISPLAY_BLACKOUT' }).success);
+/**
+ * ★모드 4개를 전부 도는 게 이 테스트의 요점이다★
+ * 원래 버그는 DISPLAY_MODE가 'BLACK' 하나만 받고 나머지 3개를 조용히 거절한 것이었다.
+ * 'AWARD' 하나만 찍어보는 테스트였으면 (b)로 고친 지금은 통과하지만, 누가 DISPLAY_MODE를
+ * 되살리면서 같은 실수를 반복해도 안 걸린다. 전수로 돌면 "콘솔은 어떤 모드로도 빔을 직접
+ * 못 켠다"가 박힌다 — 이게 실제 원칙이다.
+ */
+ok(
+  '콘솔이 빔 모드를 직접 정하는 명령은 없다 — 모드는 세그먼트에서 파생된다',
+  DisplayState.options.every((o) => !HostCmd.safeParse({ c: 'DISPLAY_MODE', mode: o.shape.mode.value }).success),
+);
 
 console.log('\n[2] 탭 조작 — 개발자도구로 이벤트 뿌리는 시나리오 (CLAUDE.md 위험 1위)');
 ok('정상 배치 통과', PlayTap.safeParse({ matchId: 'm1', n: 12, windowMs: 100 }).success);

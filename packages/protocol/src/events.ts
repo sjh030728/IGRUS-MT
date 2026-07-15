@@ -195,8 +195,22 @@ export const HostCmd = z.discriminatedUnion('c', [
   // ── 연출 ──
   /** 사운드보드. 숫자키 1~5. 리액션 9분을 덮는 유일한 도구다. */
   z.object({ c: z.literal('SFX'), cue: SfxCue }),
-  /** 빔 모드. 'BLACK'은 패닉 킬 — 카톡 알림이 빔에 뜰 때. */
-  z.object({ c: z.literal('DISPLAY_MODE'), mode: DisplayState.options[0].shape.mode }),
+
+  /**
+   * ★패닉 킬. 빔 모드를 고르는 명령이 아니다★
+   *
+   * 카톡 알림이 빔에 뜰 때 화면을 죽이는 백스톱. 그게 전부다.
+   * ★빔 모드를 콘솔이 직접 정하는 명령은 이 계약에 없다★ — 모드는 세그먼트에서 파생된다.
+   * 낮 점수 공개(SCOREBOARD_FULL)와 시상(AWARD)은 SEGMENT_GOTO로 가고, ROUND는 라운드가
+   * 돌면 그 모드다. 콘솔이 모드를 따로 정할 수 있으면 "빔에 뭐가 떠 있나"의 진실이 두 줄기가
+   * 되고, 둘은 반드시 어긋난다. HostSnapshot.legal을 서버가 파생해서 내려주는 것과 같은 이유다.
+   *
+   * ★on: boolean인 이유 — 토글이 아니다★
+   * 파라미터 없는 토글이면 두 번 눌릴 때(손 떨림, 소켓 재전송) 알림이 빔에 다시 뜬다.
+   * 패닉 킬은 멱등해야 한다. 그리고 복귀가 "아까 무슨 모드였지"가 아닌 이유도 여기 있다 —
+   * 킬은 파생 위에 덮는 오버라이드지 이동한 자리가 아니다. 끄면 파생이 다시 보인다.
+   */
+  z.object({ c: z.literal('DISPLAY_BLACKOUT'), on: z.boolean() }),
 ]);
 export type HostCmd = z.infer<typeof HostCmd>;
 
