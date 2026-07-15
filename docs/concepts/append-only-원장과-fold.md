@@ -1,3 +1,8 @@
+---
+tags:
+  - 영역/상태-정확성
+---
+
 # append-only 원장과 fold
 
 > **스텁.** `/learn append-only 원장` 으로 물어보면 채워진다. #스텁/당일

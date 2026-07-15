@@ -1,3 +1,8 @@
+---
+tags:
+  - 영역/실시간
+---
+
 # WebSocket과 Socket.IO room
 
 > **스텁.** `/learn websocket` 으로 물어보면 채워진다. #스텁/당일
