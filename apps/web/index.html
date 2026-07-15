@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <!-- user-scalable=no: 폰에서 연타할 때 더블탭 확대가 걸리면 입력이 죽는다. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>IGRUS MT</title>
+    <style>
+      /* 배경 #000 은 CLAUDE.md 타협 금지 항목이다. 회색 계열 UI 금지. */
+      html, body, #root { margin: 0; padding: 0; height: 100%; background: #000; }
+      body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; -webkit-text-size-adjust: 100%; }
+      * { box-sizing: border-box; }
+
+      /* 카운트다운 숫자가 매 초 튄다. 3-2-1이 정적이면 두구두구가 아니다. */
+      @keyframes mt-pop { from { transform: scale(1.6); opacity: 0.2 } to { transform: scale(1); opacity: 1 } }
+      /* 점수 델타가 위로 떠오른다. 얼마나 올랐는지가 보여야 야유가 나온다. */
+      @keyframes mt-rise { from { transform: translateY(0); opacity: 1 } to { transform: translateY(-40px); opacity: 0 } }
+      /* ×2 배지. 숨길 수 없다는 게 리깅 방지 장치다 (events.ts SET_MULTIPLIER). */
+      @keyframes mt-pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.45 } }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
