@@ -26,24 +26,67 @@ setTimeout(() => {
 let pass = 0, fail = 0;
 const ok = (name, cond) => { cond ? (pass++, console.log('  OK   ' + name)) : (fail++, console.log('  FAIL ' + name)); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const connect = (auth) => new Promise((res, rej) => {
+/**
+ * ★리스너는 소켓을 만들 때 같이 단다. `await connect()` 뒤에 달면 늦는다★
+ * 서버는 handleConnection에서 ★즉시★ 스냅샷을 쏜다(events.gateway.ts). 그 첫 발이
+ * 리스너가 붙기 전에 도착해서 조용히 버려지고 있었다 — 그래서 "빔이 붙자마자 뭘 받나"가
+ * 여태 한 번도 검사되지 않았다. 7:55에 빔만 켜놓은 구간이 정확히 그것이다.
+ */
+const connect = (auth, on = {}) => new Promise((res, rej) => {
   const s = io(URL, { transports: ['websocket'], auth, forceNew: true });
+  for (const [ev, fn] of Object.entries(on)) s.on(ev, fn);
   s.on('connect', () => res(s));
   s.on('connect_error', rej);
 });
 const cmd = (host, c) => new Promise((res) => host.emit('host:cmd', c, res));
 
-const display = await connect({ role: 'display' });
-const host = await connect({ role: 'host', token: 'mt-host' });
-const phone = await connect({ role: 'play' });
-
 // 빔이 본 것 전부를 기록한다. 정답 유출과 phase 순서를 여기서 판정한다.
 const seen = [];
-display.on('state:display', (s) => seen.push(s));
 const playViews = [];
-phone.on('state:play', (s) => playViews.push(s.view));
+
+const display = await connect({ role: 'display' }, { 'state:display': (s) => seen.push(s) });
+const host = await connect({ role: 'host', token: 'mt-host' });
+const phone = await connect({ role: 'play' }, { 'state:play': (s) => playViews.push(s.view) });
 
 const phaseNow = () => { const l = seen[seen.length - 1]?.state; return l?.mode === 'ROUND' ? l.round.phase : l?.mode; };
+
+/**
+ * ★차가운 서버를 요구한다. 이거 없이 두 번 돌렸다가 태웠다★
+ *
+ * 아래 검사는 "전이가 일어났나"가 아니라 ★"지금 이 phase인가"★를 묻는다. 그래서 1회차가
+ * 남긴 REACTION에 대고 2회차를 돌리면 `IDLE → PROMPT`는 FAIL인데 `REVEAL → REACTION`은
+ * **이미 REACTION이라서 OK가 뜬다** — 아무 일도 안 일어났는데 커밋 지점이 통과했다고 한다.
+ * 실측: 14 passed / 12 failed 중 OK 다섯 개가 전부 1회차 잔여물이었다.
+ *
+ * 시끄럽게 틀리는 건 그나마 낫다. ★잔여 상태가 더 잘 맞으면 전부 초록불★이 뜨면서 아무것도
+ * 검증 안 하고, 그게 이 스크립트가 존재하는 이유를 통째로 무효로 만든다.
+ * 검사를 전부 "전이 관찰"로 바꾸는 게 정공법이지만, 이 스크립트의 값어치는 짧다는 것이다.
+ * 전제를 검사 안 하느니 ★전제를 문 앞에서 막는다★.
+ */
+await sleep(150);
+console.log('\n[0] 빔이 붙자마자 — 7:55, 아직 아무도 아무것도 안 눌렀다');
+ok('접속 즉시 스냅샷이 온다 (안 오면 빔이 검은 화면으로 서 있는다)', seen.length > 0);
+const cold = seen[seen.length - 1]?.state;
+if (!cold) {
+  console.log('\n스냅샷이 없어서 나머지를 못 돈다. 서버가 떠 있나? (node dist/main.js)');
+  process.exit(1);
+}
+// 모드가 뭐든 점수판은 항상 실려 있어야 한다. 이건 부팅 직후에도 참이다.
+ok('점수판이 처음부터 있다 (CLAUDE.md: "점수판 상시 노출")',
+  Array.isArray(cold.scoreboard?.rows) && cold.scoreboard.rows.length >= 2);
+
+// 차가움 = 원장이 비었고 + 라운드가 아직 IDLE. 부팅 때 더미가 적재되므로(app.module.ts)
+// 갓 뜬 서버도 mode는 ROUND다 — SCOREBOARD_FULL은 ROUND_NEXT 뒤에나 나온다.
+const phase0 = cold.mode === 'ROUND' ? cold.round.phase : null;
+const isCold = cold.scoreboard?.throughSeq === 0 &&
+  (cold.mode === 'SCOREBOARD_FULL' || phase0 === 'IDLE');
+if (!isCold) {
+  console.log(`\n★서버가 차갑지 않다★ — mode=${cold.mode}${phase0 ? `/${phase0}` : ''}, throughSeq=${cold.scoreboard?.throughSeq ?? '?'}`);
+  console.log('이 스크립트는 빈 원장 + IDLE을 전제한다. 서버를 재시작하고 다시 돌려라.');
+  console.log('(제품 버그가 아니다. 이미 REACTION이면 PROMPT로 못 가는 게 전이표가 맞게 도는 것이고,');
+  console.log(' 다음 라운드는 ROUND_NEXT로 간다. 이 스크립트가 1회용일 뿐이다.)');
+  process.exit(1);
+}
 
 console.log('\n[1] 인증 경계 — 폰이 사회자 명령을 쏠 수 있는가 (events.ts: "그 순간 끝이다")');
 const forbidden = await new Promise((res) => {
