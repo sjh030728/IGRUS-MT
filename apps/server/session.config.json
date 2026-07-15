@@ -1,0 +1,13 @@
+{
+  "_help": "그날의 데이터. 고치고 서버만 재시작하면 된다 (빌드 불필요). 조는 2~6개. 색은 GREEN PINK YELLOW CYAN ORANGE PURPLE 중에서 겹치지 않게 — 빔에서 같은 색이면 점수판을 구분 못 한다. 총 인원과 조당 인원은 여기서 안 정한다: 폰이 접속하면 로스터가 자란다. 틀리면 서버가 부팅 때 이유를 찍고 죽는다.",
+
+  "sessionId": "igrus-mt-2026",
+  "title": "IGRUS MT 결승전",
+
+  "teams": [
+    { "id": "t1", "name": "1조", "color": "GREEN" },
+    { "id": "t2", "name": "2조", "color": "PINK" },
+    { "id": "t3", "name": "3조", "color": "YELLOW" },
+    { "id": "t4", "name": "4조", "color": "CYAN" }
+  ]
+}

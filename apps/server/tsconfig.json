@@ -1,0 +1,33 @@
+/**
+ * 서버 컴파일 설정.
+ *
+ * ★계약(packages/protocol)의 tsconfig와 일부러 다르다★
+ * 계약은 "types: []"로 Node를 차단한다 — 브라우저도 import하기 때문이다.
+ * 여기는 반대로 Node 전용이고, 데코레이터 메타데이터가 필요하다.
+ *
+ * emitDecoratorMetadata: Nest DI가 생성자 파라미터 타입을 런타임에 읽는 근거다.
+ * tsc는 이걸 하고 esbuild/tsx는 못 한다 — 그래서 서버만 tsc로 빌드한다.
+ * (계약에 dist 빌드가 생긴 이유이기도 하다. tsconfig.build.json 주석 참고.)
+ */
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": true,
+
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "sourceMap": true,
+
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}
