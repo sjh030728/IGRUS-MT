@@ -18,6 +18,7 @@ import {
   type EpochMs,
   type Me,
 } from '@mt/protocol';
+import { DbService } from '../core/db.service.js';
 import { LedgerService } from '../core/ledger.service.js';
 import { RoundService } from '../core/round.service.js';
 import { projectDisplay, projectHost, projectPlay } from '../core/projector.js';
@@ -47,6 +48,7 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   constructor(
     private readonly rounds: RoundService,
     private readonly ledger: LedgerService,
+    private readonly db: DbService,
   ) {}
 
   afterInit(server: Server) {
@@ -82,6 +84,8 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
 
     // 상태가 바뀌면 역할별 스냅샷을 통째로 다시 쏜다. 델타 병합도 리플레이도 없다.
     this.rounds.changes$.subscribe(() => this.broadcast());
+    // DB 미러가 죽거나 살아나면 콘솔 health가 그 즉시 바뀌어야 한다 — 사회자의 계기판이다.
+    this.db.status$.subscribe(() => this.pushHost());
   }
 
   async handleConnection(socket: Socket) {
@@ -179,15 +183,23 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
       case 'ROUND_COUNTDOWN': return this.rounds.countdown() ? done : reject('지금 못 누름');
       case 'ROUND_SCORE': return this.rounds.commitScore() ? done : reject('REVEAL에서만 커밋');
       case 'ROUND_ABORT': return this.rounds.abort() ? done : reject('지금 못 누름');
-      case 'ROUND_NEXT': await this.rounds.next(); await this.rounds.loadDummyRound(); return done;
+      case 'ROUND_NEXT': return this.rounds.next() ? done : reject('커밋(REACTION) 뒤에만');
+      case 'ROUND_GOTO': {
+        const r = this.rounds.gotoRound(cmd.roundId);
+        return r.ok ? done : reject(r.message);
+      }
+      case 'SEGMENT_GOTO': {
+        const r = await this.rounds.gotoSegment(cmd.segmentId);
+        return r.ok ? done : reject(r.message);
+      }
       case 'SET_MULTIPLIER': return this.rounds.setMultiplier(cmd.m) ? done : reject('지금 못 바꿈');
       case 'SET_POINTS': return this.rounds.setPoints(cmd.basePoints) ? done : reject('IDLE..COLLECT 에서만');
       case 'DISPLAY_BLACKOUT': this.rounds.setBlackout(cmd.on); return done;
       case 'CLOSE_ENTRY': this.rounds.closeEntry(); return done;
       default:
-        // 나머지 명령(되감기/보정/낮PG/세그먼트/Live/사람관리/SFX)은 단계 4다.
+        // 나머지 명령(되감기/보정/낮PG/예비투입/Live/사람관리/SFX)은 단계 3~4다.
         // 계약엔 있고 구현이 없다 — 조용히 성공시키면 사회자가 눌렀는데 아무 일도 안 난다.
-        return { ok: false as const, code: 'NOT_IMPLEMENTED', message: `${cmd.c}는 단계 4` };
+        return { ok: false as const, code: 'NOT_IMPLEMENTED', message: `${cmd.c}는 다음 단계` };
     }
   }
 
@@ -220,7 +232,7 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     const s = this.rounds.state;
     const board = this.ledger.scoreboard(s.teams);
     return projectHost(s, board, this.ledger.totals(s.teams), this.ledger.tail(10), now(), {
-      db: 'OK',
+      db: this.db.ok ? 'OK' : 'FAIL',
       displayConnected: (this.server.sockets.adapter.rooms.get('display')?.size ?? 0) > 0,
       displayAudioUnlocked: this.displayAudioUnlocked,
       phonesConnected: this.server.sockets.adapter.rooms.get('play')?.size ?? 0,

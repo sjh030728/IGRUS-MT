@@ -1,0 +1,13 @@
+{
+  "_help": "가짜 문항 8개 — 개발·리허설용. ★실전 파일(quiz.questions.json)은 이 파일을 복사해 실명 문항으로 바꾼 것이고, gitignore에 있다 — 커밋 금지 (docs/survey.md)★ 형식: 설문 '이 중 ○○한 사람은?' 그대로. answerIndex는 0부터. enabled=false로 그날 뺄 문제를 끈다.",
+  "questions": [
+    { "id": "ex1", "position": 1, "text": "이 중 전국 마술대회에 나가본 사람은? (예시)", "choices": ["강예시", "남예시", "도예시", "류예시"], "answerIndex": 0, "patter": "예선 탈락했다고 합니다" },
+    { "id": "ex2", "position": 2, "text": "이 중 면허 첫 주에 아파트 화단을 민 사람은? (예시)", "choices": ["문예시", "박예시", "송예시", "강예시"], "answerIndex": 1 },
+    { "id": "ex3", "position": 3, "text": "이 중 부대 PC를 하루 마비시킨 사람은? (예시)", "choices": ["신예시", "안예시", "양예시", "오예시"], "answerIndex": 2, "patter": "복구는 본인이 했답니다" },
+    { "id": "ex4", "position": 4, "text": "이 중 TV 퀴즈 프로에 나가본 사람은? (예시)", "choices": ["우예시", "유예시", "이예시", "임예시"], "answerIndex": 3 },
+    { "id": "ex5", "position": 5, "text": "이 중 라면을 하루 세 끼 먹어본 사람은? (예시)", "choices": ["장예시", "전예시", "정예시", "조예시"], "answerIndex": 0 },
+    { "id": "ex6", "position": 6, "text": "이 중 지갑을 세 번 잃어버린 사람은? (예시)", "choices": ["주예시", "차예시", "최예시", "하예시"], "answerIndex": 1 },
+    { "id": "ex7", "position": 7, "text": "이 중 마라톤 완주 경험자는? (예시)", "choices": ["한예시", "허예시", "홍예시", "황예시"], "answerIndex": 2 },
+    { "id": "ex8", "position": 8, "text": "이 중 새벽 4시에 등교해본 사람은? (예시)", "choices": ["고예시", "공예시", "곽예시", "구예시"], "answerIndex": 3, "patter": "문이 잠겨 있었답니다" }
+  ]
+}

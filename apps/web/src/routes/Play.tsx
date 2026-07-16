@@ -69,31 +69,45 @@ export function Play() {
       );
 
     case 'INPUT': {
-      const choices = (snap.prompt as { choices?: readonly string[] })?.choices ?? [];
-      const mine = snap.mine?.value as string | undefined;
+      // ★계약이 어휘를 보장한다★ (play.ts PlayPrompt) — 캐스팅 없이 그대로 그린다.
+      const items = snap.prompt.items;
+      const mine = snap.mine?.value;
+      const isTeam = snap.scope === 'TEAM';
+      const mineLabel = items.find((it) => it.value === mine)?.label ?? String(mine ?? '');
       return (
         <Wrap>
           <Countdown endsAt={snap.endsAt} />
-          {/* ★문제 본문이 여기 없다★ 빔을 보게 하려고 계약이 안 보낸다 */}
-          <Small>화면을 보고 고르세요</Small>
+          {/* ★문제 본문이 여기 없다★ 빔을 보게 하려고 어휘가 안 싣는다 (play.ts) */}
+          <Small>{isTeam ? '조 대표 답 — 아무나 누르고, 잠기기 전까진 서로 덮어써요' : '화면을 보고 고르세요'}</Small>
           <div style={{ display: 'grid', gap: 12, width: '100%', marginTop: 16 }}>
-            {choices.map((c) => (
-              <button
-                key={c}
-                onClick={() => submit(snap.roundId, c)}
-                style={{
-                  padding: '22px 0', fontSize: 30, fontWeight: 800, borderRadius: 14, cursor: 'pointer',
-                  background: mine === c ? teamColor : '#000',
-                  color: mine === c ? '#000' : teamColor,
-                  border: `3px solid ${teamColor}`,
-                  boxShadow: mine === c ? glow(teamColor) : 'none',
-                }}
-              >
-                {c}
-              </button>
-            ))}
+            {items.map((it) => {
+              // 배신 라운드처럼 톤이 있는 보기는 그 색(협력=그린, 배신=핑크), 중립이면 조 색.
+              const color = it.tone === 'NEUTRAL' ? teamColor : TONE[it.tone];
+              const on = mine === it.value;
+              return (
+                <button
+                  key={it.value}
+                  onClick={() => submit(snap.roundId, it.value)}
+                  style={{
+                    padding: '22px 0', fontSize: 30, fontWeight: 800, borderRadius: 14, cursor: 'pointer',
+                    background: on ? color : '#000',
+                    color: on ? '#000' : color,
+                    border: `3px solid ${color}`,
+                    boxShadow: on ? glow(color) : 'none',
+                  }}
+                >
+                  {it.label}
+                </button>
+              );
+            })}
           </div>
-          {mine && <Small>제출됨: {mine} · 잠금 전까진 바꿀 수 있어요</Small>}
+          {mine != null && (
+            <Small>
+              {isTeam
+                ? <>우리 조 답: <b>{mineLabel}</b>{snap.mine?.by ? ` — ${snap.mine.by}이(가) 눌렀어요` : ''}</>
+                : '제출됨 · 잠금 전까진 바꿀 수 있어요'}
+            </Small>
+          )}
           {ack && <Small color={TONE.BAD}>{ack}</Small>}
         </Wrap>
       );
@@ -109,20 +123,22 @@ export function Play() {
         <Wrap>
           <div style={{ fontSize: 64, marginBottom: 12 }}>👀</div>
           <Big color={teamColor}>앞을 보세요</Big>
-          {snap.mine != null && <Small>내 답: {String(snap.mine)}</Small>}
+          {/* mine은 서버가 라벨로 번역해서 준다 — 'BETRAY'가 아니라 '🔪 배신'이 뜬다 */}
+          {snap.mine != null && <Small>{snap.scope === 'TEAM' ? '우리 조 답' : '내 답'}: {String(snap.mine)}</Small>}
         </Wrap>
       );
 
     // 그땐 어차피 고개를 숙인다. "야 나 맞았어"가 오디오다.
     case 'RESULT': {
-      const up = snap.teamDelta > 0;
+      const d = snap.teamDelta;
       return (
         <Wrap>
           <Small>{snap.me.teamName}</Small>
-          <Big color={up ? TEAM_COLOR.GREEN : TEAM_COLOR.PINK}>
-            {up ? '+' : ''}{snap.teamDelta}
+          <Big color={d > 0 ? TEAM_COLOR.GREEN : d < 0 ? TEAM_COLOR.PINK : TONE.NEUTRAL}>
+            {d > 0 ? `+${d}` : d}
           </Big>
-          <Small>{up ? '올랐어요' : '이번엔 없네요'}</Small>
+          {/* 배신 라운드에서 음수가 실제로 온다 — "이번엔 없네요"로 뭉개면 폰이 거짓말한다 */}
+          <Small>{d > 0 ? '올랐어요' : d < 0 ? '내려갔어요…' : '이번엔 변동 없음'}</Small>
         </Wrap>
       );
     }

@@ -10,6 +10,8 @@
 import {
   HostCmd,
   PlayTap,
+  PlayPrompt,
+  PlaySnapshot,
   ContentChunks,
   TeamId,
   DisplayState,
@@ -98,6 +100,31 @@ ok('REVEAL의 phaseEndsAt은 null — 리빌 뒤엔 타이머가 없다', beam.m
 console.log('\n[6] 브랜드 타입');
 ok('TeamId.parse 통과', TeamId.safeParse('t1').success);
 ok('빈 문자열 거절', !TeamId.safeParse('').success);
+
+console.log('\n[7] 폰 입력 어휘 — 문제 본문이 폰으로 갈 수 있는가 (events.ts: 빔을 보게 하려고)');
+const choices2 = {
+  kind: 'choices' as const,
+  items: [
+    { value: 'COOP', label: '협력', tone: 'GOOD' as const },
+    { value: 'BETRAY', label: '배신', tone: 'BAD' as const },
+  ],
+};
+ok('객관식 2지(배신) 통과', PlayPrompt.safeParse(choices2).success);
+ok('1지선다 거절 (고를 게 없다)', !PlayPrompt.safeParse({ ...choices2, items: choices2.items.slice(0, 1) }).success);
+ok('7지선다 거절 (엄지 상한 6)', !PlayPrompt.safeParse({ ...choices2, items: Array(7).fill(choices2.items[0]) }).success);
+/**
+ * ★어휘에 본문 필드가 없다는 걸 실행으로 확인한다★
+ * strict가 아니라도 알려지지 않은 kind는 판별 유니온이 거절하고,
+ * 어느 멤버에도 자유 텍스트를 실을 자리가 없다 — 실으려면 play.ts에 멤버를 추가해야 하고
+ * 그 순간 상단 주석("이름은 빔에 있다")을 읽게 된다.
+ */
+ok('본문형 프롬프트는 어휘에 없다', !PlayPrompt.safeParse({ kind: 'headline', text: '이 중 마술대회 나간 사람은?' }).success);
+const meFixture = { participantId: 'p1', teamId: 't1', name: '김', teamName: '1조', teamColor: 'GREEN' as const };
+ok(
+  'HEADS_UP엔 scope가 있어야 한다 — "내 답"과 "우리 조 답"은 다른 문구다',
+  !PlaySnapshot.safeParse({ view: 'HEADS_UP', me: meFixture, mine: null }).success &&
+    PlaySnapshot.safeParse({ view: 'HEADS_UP', me: meFixture, scope: 'TEAM', mine: null }).success,
+);
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===\n`);
 process.exit(fail > 0 ? 1 : 0);

@@ -3,26 +3,34 @@ import { Subject } from 'rxjs';
 import {
   LEGAL_TRANSITIONS,
   ParticipantId,
-  SegmentId,
   SessionId,
   TeamId,
   type EpochMs,
+  type Game,
+  type GameId,
   type LockRevealGame,
   type RoundPhase,
-  type SubmissionBag,
+  type SegmentId,
   type SubmissionRecord,
 } from '@mt/protocol';
+import { DbService } from './db.service.js';
 import { LedgerService } from './ledger.service.js';
-import { loadSessionConfig, toTeams } from './config.js';
+import { loadSessionConfig, toProgram, toTeams } from './config.js';
+import { foldFinal } from './submissions.js';
 import type { ActiveRound, SessionState } from './state.js';
-import { dummyGame } from '../games/dummy.game.js';
+import { buildGames } from '../games/registry.js';
 
 const now = (): EpochMs => Date.now();
 
+/** 사회자한테 돌아가는 거절 사유. 조용히 실패하면 눌렀는데 아무 일도 안 나고, 그게 8시 35분에 제일 나쁘다. */
+type NavResult = { ok: true } | { ok: false; message: string };
+
 /**
- * ═══ 리빌 루프 ═══ 단계 1의 본체.
+ * ═══ 세그먼트 러너 + 리빌 루프 ═══
  *
- * CLAUDE.md 원칙 1: "잠금 → 카운트다운 → 동시 공개 → 점수 애니메이션. 이 시퀀스가 코어다."
+ * 단계 1의 리빌 루프 위에 단계 2가 세그먼트를 얹었다: 프로그램(config)의 꼭지를 갈아타고,
+ * GAME 세그먼트 안에서 라운드 목록을 굴린다. ★코어가 게임의 kind로 분기하는 곳은
+ * 여기뿐이다★ (game.ts) — 지금은 LOCK_REVEAL만 굴릴 줄 알고, Live 엔진은 단계 3이다.
  *
  * ★전이 규칙을 여기 다시 쓰지 않는다★ 전부 LEGAL_TRANSITIONS를 물어본다.
  * 표가 두 벌이 되면 어긋나고, 어긋난 걸 아는 시점은 8시 35분이다.
@@ -33,19 +41,35 @@ export class RoundService implements OnModuleDestroy {
   readonly changes$ = new Subject<void>();
 
   readonly state: SessionState;
-  private readonly game: LockRevealGame<unknown, unknown> = dummyGame as LockRevealGame<unknown, unknown>;
+  private readonly games: ReadonlyMap<GameId, Game>;
   private timer: NodeJS.Timeout | null = null;
 
-  constructor(private readonly ledger: LedgerService) {
+  constructor(
+    private readonly ledger: LedgerService,
+    db: DbService,
+  ) {
     // ★던지면 Nest가 부팅에 실패한다. 그게 의도다★ — 설정이 틀렸으면 7:30에 알아야 한다.
     const cfg = loadSessionConfig();
+    this.games = buildGames({ loadQuizQuestions: () => db.loadQuizQuestions() });
+
+    const program = toProgram(cfg);
+    // config는 game 문자열이 뭔지 모른다. 등록부 대조는 여기서만 할 수 있다.
+    for (const seg of program) {
+      if (seg.kind === 'GAME' && !this.games.has(seg.gameId!)) {
+        throw new Error(
+          `[config] 세그먼트 "${seg.segmentId}"가 없는 게임 "${seg.gameId}"를 가리킵니다. ` +
+            `등록된 게임: ${[...this.games.keys()].join(', ')}`,
+        );
+      }
+    }
+
     this.state = {
       sessionId: SessionId.parse(cfg.sessionId),
       teams: toTeams(cfg),
       roster: new Map(),
       entryOpen: true,
-      segmentId: SegmentId.parse('seg-dummy'),
-      segmentTitle: cfg.title,
+      program,
+      segment: null, // bootstrap의 start()가 첫 세그먼트에 들어가며 채운다
       round: null,
       blackout: false,
       stateSeq: 0,
@@ -54,8 +78,6 @@ export class RoundService implements OnModuleDestroy {
     // ★틱 하나로 자동 전이 둘을 굴린다★
     // 틱은 매번 현재 endsAt을 다시 읽는다. phase마다 setTimeout을 걸면 endsAt이 바뀔 때
     // 재스케줄을 잊는 버그가 생기는데, 여기엔 그게 존재할 수가 없다.
-    // (원래 이 문장이 ROUND_EXTEND를 근거로 들었다. 그건 decisions/0002에서 빠졌고, 지금은
-    //  endsAt을 미는 명령이 아예 없다. 그래도 아래 ★가 진짜 이유라 틱은 그대로 둔다.)
     //
     // ★10ms인 이유: 이 간격이 그대로 COUNTDOWN_ZERO의 지연 상한이다★
     // 빔은 소리와 숫자를 phaseEndsAt에서 로컬로 파생시키지만(정확), REVEAL 프레임이
@@ -66,6 +88,28 @@ export class RoundService implements OnModuleDestroy {
 
   onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
+  }
+
+  /**
+   * 부팅 마지막 단계. 첫 세그먼트에 들어가고, ★모든 GAME 세그먼트를 미리 적재해본다★
+   *
+   * 프리플라이트가 없으면 퀴즈 문제은행이 빈 걸 8:03의 SEGMENT_GOTO 거절로 처음 안다.
+   * 지금 한 번씩 돌려보면 7:30에 안다 — 결과는 버린다 (진입 시 다시 적재. "적재 후 불변"은
+   * 라운드 얘기지 세그먼트 재진입까지 금지하는 게 아니다).
+   */
+  async start(): Promise<void> {
+    for (const seg of this.state.program) {
+      if (seg.kind !== 'GAME') continue;
+      const game = this.games.get(seg.gameId!)!;
+      if (game.kind !== 'LOCK_REVEAL') continue; // Live 프리플라이트는 단계 3에서
+      const rounds = await game.loadRounds(this.loadCtx(seg.segmentId));
+      if (rounds.length === 0) throw new Error(`[preflight] "${seg.segmentId}" 라운드 0개 — 문제은행을 확인하세요`);
+      console.log(`[preflight] ${seg.segmentId}: ${rounds.length}라운드 OK`);
+    }
+
+    const first = this.state.program[0]!; // config가 min(1)을 보장한다
+    const r = await this.gotoSegment(first.segmentId);
+    if (!r.ok) throw new Error(`[boot] 첫 세그먼트 진입 실패 — ${r.message}`);
   }
 
   // ── 자동 전이 ──────────────────────────────────────────────
@@ -82,21 +126,84 @@ export class RoundService implements OnModuleDestroy {
     else if (r.phase === 'COUNTDOWN') this.enter('REVEAL'); // COUNTDOWN_ZERO
   }
 
-  // ── 사회자 명령 ────────────────────────────────────────────
+  // ── 세그먼트 이동 ──────────────────────────────────────────
 
-  async loadDummyRound(): Promise<void> {
-    const rounds = await this.game.loadRounds({
-      segmentId: this.state.segmentId,
-      teams: this.state.teams,
-      roster: [...this.state.roster.values()],
-    });
-    const spec = rounds[0];
-    if (!spec) throw new Error('더미 라운드가 비어 있다');
+  /**
+   * ★이동은 라운드가 안 도는 동안만★ (IDLE·REACTION·ABORTED·없음)
+   * COLLECT 한복판에 세그먼트를 갈아타면 커밋 안 된 제출이 조용히 증발한다 —
+   * 버리는 건 ABORT의 일이고, 그건 시끄럽다(빔에 "무효"가 뜬다).
+   */
+  async gotoSegment(segmentId: SegmentId): Promise<NavResult> {
+    if (!this.canNavigate()) return { ok: false, message: '라운드 진행 중 — 먼저 ABORT' };
+    const def = this.state.program.find((s) => s.segmentId === segmentId);
+    if (!def) return { ok: false, message: '프로그램에 없는 세그먼트' };
 
+    if (def.kind !== 'GAME') {
+      this.state.segment = { def, game: null, rounds: [], cursor: 0 };
+      this.state.round = null;
+      this.bump();
+      return { ok: true };
+    }
+
+    const game = this.games.get(def.gameId!)!; // 생성자에서 대조 완료
+    if (game.kind !== 'LOCK_REVEAL') return { ok: false, message: 'Live 게임은 단계 3' };
+
+    // ★게임당 1회. 문제은행 조회는 여기서 끝낸다★ (game.ts loadRounds)
+    let rounds;
+    try {
+      rounds = await game.loadRounds(this.loadCtx(def.segmentId));
+    } catch (e) {
+      return { ok: false, message: `라운드 적재 실패 — ${(e as Error).message}` };
+    }
+    if (rounds.length === 0) return { ok: false, message: '라운드가 0개 — 문제은행 확인' };
+
+    this.state.segment = { def, game, rounds, cursor: 0 };
+    this.loadRoundAt(0);
+    return { ok: true };
+  }
+
+  /** 라운드 스킵/점프. CLAUDE.md 콘솔 필수기능 "라운드 스킵"의 절반 (다른 절반은 ROUND_NEXT). */
+  gotoRound(roundId: string): NavResult {
+    const seg = this.state.segment;
+    if (!seg?.game) return { ok: false, message: '게임 세그먼트가 아님' };
+    if (!this.canNavigate()) return { ok: false, message: '라운드 진행 중 — 먼저 ABORT' };
+    const i = seg.rounds.findIndex((r) => r.roundId === roundId);
+    if (i < 0) return { ok: false, message: '이 세그먼트에 없는 라운드' };
+    this.loadRoundAt(i);
+    return { ok: true };
+  }
+
+  /** 커밋된 뒤에만. 마지막 라운드 다음은 세그먼트 표지(점수판) — 사회자 멘트 + 다음 세그먼트로 가는 구간. */
+  next(): boolean {
+    const r = this.state.round;
+    const seg = this.state.segment;
+    if (!r || !seg || !['REACTION', 'ABORTED'].includes(r.phase)) return false;
+
+    const ahead = seg.cursor + 1;
+    if (ahead < seg.rounds.length) {
+      this.loadRoundAt(ahead);
+    } else {
+      seg.cursor = seg.rounds.length; // 소진 표시
+      this.state.round = null;
+      this.bump();
+    }
+    return true;
+  }
+
+  private canNavigate(): boolean {
+    const r = this.state.round;
+    return !r || ['IDLE', 'REACTION', 'ABORTED'].includes(r.phase);
+  }
+
+  private loadRoundAt(i: number): void {
+    const seg = this.state.segment!;
+    const game = seg.game!;
+    const spec = seg.rounds[i]!;
+    seg.cursor = i;
     this.state.round = {
       spec,
-      gameId: this.game.gameId,
-      scope: this.game.answerScope, // ★게임한테서 받는다. 코어가 정하지 않는다★
+      gameId: game.gameId,
+      scope: game.answerScope, // ★게임한테서 받는다. 코어가 정하지 않는다★
       phase: 'IDLE',
       phaseStartedAt: now(),
       phaseEndsAt: null,
@@ -108,8 +215,13 @@ export class RoundService implements OnModuleDestroy {
     this.bump();
   }
 
-  // 전부 "합법이었나"를 boolean으로 돌려준다. 콘솔이 거절 사유를 봐야 한다 —
-  // 조용히 실패하면 사회자가 눌렀는데 아무 일도 안 나고, 그게 8시 35분에 제일 나쁘다.
+  private loadCtx(segmentId: SegmentId) {
+    return { segmentId, teams: this.state.teams, roster: [...this.state.roster.values()] };
+  }
+
+  // ── 사회자 명령 (리빌 루프) ────────────────────────────────
+
+  // 전부 "합법이었나"를 boolean으로 돌려준다. 콘솔이 거절 사유를 봐야 한다.
   present(): boolean { return this.enter('PROMPT'); }
   open(): boolean { return this.enter('COLLECT'); }
   lock(): boolean { return this.enter('LOCKED'); }
@@ -179,14 +291,6 @@ export class RoundService implements OnModuleDestroy {
     return true;
   }
 
-  /** 커밋된 뒤에만. 다음 라운드는 새 라운드의 IDLE이다. */
-  async next(): Promise<void> {
-    const r = this.state.round;
-    if (!r || !['REACTION', 'ABORTED'].includes(r.phase)) return;
-    this.state.round = null;
-    this.bump();
-  }
-
   // ── 제출 ───────────────────────────────────────────────────
 
   /**
@@ -194,17 +298,18 @@ export class RoundService implements OnModuleDestroy {
    * 폰은 스피너 대신 "마감됐어요"를 띄워야 한다.
    */
   submit(pid: ParticipantId, roundId: string, raw: unknown):
-    | { ok: true; at: EpochMs; accepted: unknown }
+    | { ok: true; at: EpochMs; accepted: unknown; by?: string }
     | { ok: false; reason: 'PHASE_CLOSED' | 'WRONG_ROUND' | 'NOT_IN_ROSTER' | 'INVALID'; message: string } {
     const r = this.state.round;
-    if (!r || r.phase !== 'COLLECT') return { ok: false, reason: 'PHASE_CLOSED', message: '마감됐어요' };
+    const game = this.state.segment?.game;
+    if (!r || !game || r.phase !== 'COLLECT') return { ok: false, reason: 'PHASE_CLOSED', message: '마감됐어요' };
     // 재접속한 폰이 옛날 화면 상태로 제출하는 건 실제로 일어난다.
     if (r.spec.roundId !== roundId) return { ok: false, reason: 'WRONG_ROUND', message: '지난 문제예요' };
 
     const person = this.state.roster.get(pid);
     if (!person) return { ok: false, reason: 'NOT_IN_ROSTER', message: '입장 정보가 없어요' };
 
-    const parsed = this.game.parseAnswer(r.spec, raw);
+    const parsed = game.parseAnswer(r.spec, raw);
     if (!parsed.ok) return { ok: false, reason: 'INVALID', message: parsed.message };
 
     /**
@@ -227,7 +332,8 @@ export class RoundService implements OnModuleDestroy {
     };
     r.log.push(rec);
     this.bump();
-    return { ok: true, at: rec.at, accepted: parsed.value };
+    // TEAM이면 "누가 우리 조 답을 정했나"가 폰에 뜬다 — 지금 제출한 본인이다.
+    return { ok: true, at: rec.at, accepted: parsed.value, ...(r.scope === 'TEAM' ? { by: person.name } : {}) };
   }
 
   // ── 로스터 ─────────────────────────────────────────────────
@@ -267,11 +373,12 @@ export class RoundService implements OnModuleDestroy {
   }
 
   /**
-   * ★잠금 시점에 제출을 접는다. 접는 키가 scope다★
+   * ★잠금 시점에 제출을 접는다. 접는 키가 scope다★ (foldFinal — 접기 규칙은 submissions.ts 한 곳에)
    * game.ts: "log를 절대 안 버린다 — 팀 단위로 접더라도 개인 기록은 전량 남긴다."
    * 그래서 final은 파생물이고 log가 원본이다. 리액션의 "OO이 나와봐"는 log에서 나온다.
    */
   private runScore(r: ActiveRound) {
+    const game = this.state.segment!.game as LockRevealGame<unknown>; // 라운드가 있으면 게임 세그먼트다
     const base = {
       log: r.log,
       roster: [...this.state.roster.values()],
@@ -279,23 +386,9 @@ export class RoundService implements OnModuleDestroy {
     };
 
     if (r.scope === 'TEAM') {
-      // ★조장도 다수결도 아니다. 아무 조원이나 누르되 잠금까지 덮어쓰기★ (game.ts)
-      // 그래서 조별 "마지막에 누른 것"이 이긴다. 개인 revision이 아니라 시각으로 정렬한다 —
-      // 번복은 조 단위 사건이고 누가 눌렀는지는 서로 다를 수 있다.
-      const final = new Map<TeamId, SubmissionRecord<unknown>>();
-      for (const x of r.log) {
-        const prev = final.get(x.teamId);
-        if (!prev || x.at >= prev.at) final.set(x.teamId, x);
-      }
-      return this.game.score(r.spec, { ...base, scope: 'TEAM', final } satisfies SubmissionBag<unknown>);
+      return game.score(r.spec, { ...base, scope: 'TEAM', final: foldFinal(r.log, (x) => x.teamId) });
     }
-
-    const final = new Map<ParticipantId, SubmissionRecord<unknown>>();
-    for (const x of r.log) {
-      const prev = final.get(x.participantId);
-      if (!prev || x.revision >= prev.revision) final.set(x.participantId, x);
-    }
-    return this.game.score(r.spec, { ...base, scope: 'PARTICIPANT', final } satisfies SubmissionBag<unknown>);
+    return game.score(r.spec, { ...base, scope: 'PARTICIPANT', final: foldFinal(r.log, (x) => x.participantId) });
   }
 
   private bump(): void {
@@ -303,4 +396,3 @@ export class RoundService implements OnModuleDestroy {
     this.changes$.next();
   }
 }
-

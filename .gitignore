@@ -8,3 +8,7 @@ dist/
 .env
 .env.local
 .DS_Store
+
+# ★실전 퀴즈 시드 — 실명 개인정보라 커밋 금지 (docs/survey.md)★
+# 예시(quiz.questions.example.json)는 가짜 이름이라 커밋해도 된다.
+apps/server/db/quiz.questions.json

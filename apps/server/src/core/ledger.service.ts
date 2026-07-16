@@ -1,5 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { LedgerEntry, ScoreRow, Scoreboard, SessionId, TeamId, TeamInfo } from '@mt/protocol';
+import { SessionId as SessionIdSchema } from '@mt/protocol';
+import { DbService } from './db.service.js';
+import { loadSessionConfig } from './config.js';
 
 /**
  * 점수 원장. ledger.ts의 규칙 3줄을 그대로 구현한다:
@@ -7,11 +10,11 @@ import type { LedgerEntry, ScoreRow, Scoreboard, SessionId, TeamId, TeamInfo } f
  *   2. ROUND / ADJUST : 전부 더함 (add)
  *   3. VOID 당한 seq는 건너뜀
  *
- * ★단계 1은 메모리다. Postgres는 단계 2★
- * CLAUDE.md가 DB를 "문제 은행 + 결과 아카이브 전용"으로 못 박았고, 문제 은행은
- * 단계 2에 처음 필요해진다. 원칙 4가 지키라는 건 fold 로직이지 스토리지가 아니다 —
- * 재시작 복구는 `SELECT * FROM session_ledger ORDER BY seq` → 아래 fold다.
- * 그래서 fold를 지금 짜고 append만 나중에 DB로 돌린다. 복구 코드는 따로 안 생긴다.
+ * ★진실은 메모리, DB는 미러다★ (단계 2에서 영속화 도입)
+ * 읽기(totals/scoreboard)는 매 스냅샷 도는 뜨거운 경로라 전부 메모리다.
+ * append는 메모리에 먼저 쌓고 DB에 비동기로 미러한다 — 커밋(리빌 직후)이
+ * DB 지연에 볼모로 잡히면 안 된다. DB가 죽어도 그날 밤 점수는 계속 돈다.
+ * 재시작 복구: 부팅 때 session_ledger를 읽어 이 배열을 되살린다 → fold는 그대로.
  */
 /**
  * ★Omit을 판별 유니온에 그냥 걸면 안 된다★
@@ -25,24 +28,34 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type NewLedgerEntry = DistributiveOmit<LedgerEntry, 'seq'>;
 
 @Injectable()
-export class LedgerService {
-  private readonly entries: LedgerEntry[] = [];
+export class LedgerService implements OnModuleInit {
+  private entries: LedgerEntry[] = [];
   private nextSeq = 1;
+  private readonly sessionId: SessionId;
+
+  constructor(private readonly db: DbService) {
+    this.sessionId = SessionIdSchema.parse(loadSessionConfig().sessionId);
+  }
 
   /**
-   * seq는 원장이 매긴다 (ids.ts: "DB가 매긴다"). 호출자는 못 정한다.
-   *
-   * ★이걸 DB로 돌리는 순간 docs/program-ops.md에 "서버가 죽으면" 절차가 필요해진다★
-   * 지금은 못 쓴다 — 복구가 없으니 쓸 내용이 거짓이 된다. 복구를 만드는 게 이 함수라
-   * 리마인더를 여기 둔다. 사람이 기억할 일이 아니다 (decisions/0004).
-   *
-   * 쓸 내용은 이미 정해져 있다: **재시작만 한다 → 점수판을 본다 → 이상하면 낮 점수를
-   * 다시 넣는다.** 세 줄이면 되고 원장이 뭔지 몰라도 안전하다 — SEED가 set이라
-   * 두 번 넣어도 두 배가 안 되기 때문이다(`totals()` 아래).
+   * ★재시작 복구가 이 몇 줄이 전부다★ (원칙 4)
+   * 프로세스가 죽어도 확정 점수는 DB에 있다. 다시 읽어 배열만 되살리면
+   * totals/scoreboard는 아무것도 모른 채 그대로 돈다. 진행 중이던 라운드는
+   * 복구하지 않는다 — "사회자가 다시 제시한다(20초)" (ledger.ts).
    */
+  async onModuleInit(): Promise<void> {
+    this.entries = await this.db.loadLedger(this.sessionId);
+    this.nextSeq = (this.entries[this.entries.length - 1]?.seq ?? 0) + 1;
+    if (this.entries.length > 0) {
+      console.log(`[ledger] 복구 — 기입 ${this.entries.length}건 (seq ${this.nextSeq - 1}까지). 점수판이 이어진다.`);
+    }
+  }
+
+  /** seq는 원장이 매긴다. 호출자는 못 정한다. 미러 실패는 여길 막지 않는다 (db.service). */
   append(entry: NewLedgerEntry): LedgerEntry {
     const withSeq = { ...entry, seq: this.nextSeq++ } as LedgerEntry;
     this.entries.push(withSeq);
+    this.db.mirrorLedger(this.sessionId, withSeq);
     return withSeq;
   }
 

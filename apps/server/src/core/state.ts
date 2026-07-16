@@ -2,12 +2,14 @@ import type {
   AnswerScope,
   EpochMs,
   GameId,
+  LockRevealGame,
   RoundPhase,
   RoundSpec,
   RosterEntry,
   ParticipantId,
   ScoreResult,
   SegmentId,
+  SegmentKind,
   SessionId,
   SubmissionRecord,
   TeamInfo,
@@ -22,9 +24,33 @@ import type {
  * ledger.ts: "복구되는 것은 점수뿐이다. 진행 중이던 라운드는 날아가고 사회자가 다시 제시한다(20초)."
  */
 
-/** 진행 중인 라운드 하나. 단계 1엔 항상 0개 또는 1개다. */
+/** 프로그램의 한 꼭지 정의. session.config.json에서 온다. ★불변★ */
+export interface SegmentDef {
+  segmentId: SegmentId;
+  kind: SegmentKind;
+  title: string;
+  /** kind가 GAME일 때만 non-null. 부팅 때 레지스트리에 있는지 검사한다. */
+  gameId: GameId | null;
+}
+
+/**
+ * 지금 서 있는 세그먼트. SEGMENT_GOTO가 갈아끼운다.
+ *
+ * rounds는 진입 때 loadRounds() 1회의 결과다 (game.ts: "문제은행 조회는 여기서 끝낸다").
+ * cursor는 rounds에서의 현재 위치. rounds.length면 소진 — 빔은 세그먼트 표지(점수판)로
+ * 돌아가고, 사회자 멘트 + SEGMENT_GOTO 구간이 된다.
+ */
+export interface SegmentState {
+  def: SegmentDef;
+  /** kind가 GAME이면 그 게임 모듈. 코어가 parseAnswer/score를 여기서 찾는다. */
+  game: LockRevealGame<unknown> | null;
+  rounds: readonly RoundSpec[];
+  cursor: number;
+}
+
+/** 진행 중인 라운드 하나. 항상 0개 또는 1개다. */
 export interface ActiveRound {
-  spec: RoundSpec<unknown>;
+  spec: RoundSpec;
   gameId: GameId;
   /**
    * ★게임한테서 받아 적재 때 동결한다. 코어가 값을 박으면 안 된다★
@@ -54,8 +80,10 @@ export interface SessionState {
   teams: TeamInfo[];
   roster: Map<ParticipantId, RosterEntry>;
   entryOpen: boolean;
-  segmentId: SegmentId;
-  segmentTitle: string;
+  /** 프로그램 전체. 부팅 때 config에서 굽고 그날 안 바뀐다 (예비 투입 SEGMENT_INJECT는 단계 4). */
+  program: readonly SegmentDef[];
+  /** null은 부팅 직후 찰나뿐 — bootstrap이 첫 세그먼트에 들어가면서 채운다. */
+  segment: SegmentState | null;
   round: ActiveRound | null;
   /**
    * ★모드가 아니라 오버라이드다★ decisions/0002 참고.

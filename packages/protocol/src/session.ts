@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EpochMs, ParticipantId, TeamId } from './ids.js';
+import { EpochMs, GameId, ParticipantId, SegmentId, TeamId } from './ids.js';
 
 /**
  * 조. 낮 야외 PG부터 이어지는 단위이고, 점수는 전부 여기에 붙는다.
@@ -45,6 +45,31 @@ export const Scoreboard = z.object({
   throughSeq: z.number().int().nonnegative(),
 });
 export type Scoreboard = z.infer<typeof Scoreboard>;
+
+/**
+ * 세그먼트 종류 — 프로그램의 한 꼭지가 뭘 하는가.
+ *
+ * ★세그먼트는 게임이 없어도 된다★ (decisions/0002)
+ * 낮 점수 공개(SCOREBOARD)와 시상(AWARD)이 그것이다. "세그먼트 = 게임"으로 짜면
+ * 그 둘이 살 곳이 없어져 손이 DISPLAY_MODE로 돌아간다 — 빔 모드의 진실이 두 줄기가 된다.
+ * 빔 모드는 이 kind에서 파생된다: SCOREBOARD → SCOREBOARD_FULL / AWARD → AWARD / GAME → ROUND.
+ */
+export const SegmentKind = z.enum(['SCOREBOARD', 'GAME', 'AWARD']);
+export type SegmentKind = z.infer<typeof SegmentKind>;
+
+/**
+ * 콘솔에 뜨는 프로그램 한 줄. 사회자가 SEGMENT_GOTO로 지목할 대상이다.
+ * 서버 쪽 세그먼트 정의는 session.config.json에 산다 — 그날의 데이터라서.
+ */
+export const ProgramRow = z.object({
+  segmentId: SegmentId,
+  title: z.string(),
+  kind: SegmentKind,
+  /** kind가 GAME일 때만 non-null. */
+  gameId: GameId.nullable(),
+  current: z.boolean(),
+});
+export type ProgramRow = z.infer<typeof ProgramRow>;
 
 /** 폰이 아는 자기 자신. */
 export const Me = z.object({

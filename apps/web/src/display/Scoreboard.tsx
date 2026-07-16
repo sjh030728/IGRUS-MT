@@ -34,7 +34,9 @@ function Row({ row, compact }: { row: Board['rows'][number]; compact: boolean })
         {shown}
       </div>
       {moved && (
-        <div style={{ position: 'absolute', right: '-0.5vw', top: 0, fontSize: 'clamp(14px,1.4vw,26px)', fontWeight: 800, color: row.lastDelta! > 0 ? TEAM_COLOR.GREEN : TEAM_COLOR.PINK, animation: 'mt-rise 900ms ease-out' }}>
+        // ★이름 줄 위로 띄운다★ top:0이면 "n위 · n조" 글자와 겹쳐서 음수의 −가 가려진다 —
+        // 배신 라운드에서 실제로 "-300"이 "300"으로 보였다. 음수는 단계 2부터 진짜로 온다.
+        <div style={{ position: 'absolute', right: '-0.5vw', top: '-1.3em', fontSize: 'clamp(14px,1.4vw,26px)', fontWeight: 800, color: row.lastDelta! > 0 ? TEAM_COLOR.GREEN : TEAM_COLOR.PINK, animation: 'mt-rise 900ms ease-out' }}>
           {row.lastDelta! > 0 ? '+' : ''}{row.lastDelta}
         </div>
       )}

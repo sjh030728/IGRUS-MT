@@ -13,9 +13,10 @@ import {
 import { DisplayState, SfxCue } from './display.js';
 import { LedgerEntry } from './ledger.js';
 import { LiveArmSpec, LiveFrame, LivePhase, MatchCard, MatchResult, TapTugPayload } from './live.js';
-import { Me, RosterEntry, Scoreboard, TeamInfo } from './session.js';
+import { Me, ProgramRow, RosterEntry, Scoreboard, TeamInfo } from './session.js';
 import { SuspectRow } from './anticheat.js';
 import { AnswerScope } from './game.js';
+import { PlayPrompt } from './play.js';
 
 /**
  * ═══ WS 이벤트 스키마 ═══
@@ -241,6 +242,11 @@ export const HostSnapshot = z.object({
   display: DisplayState,
   /** ★정답★. DisplayState엔 이 필드가 아예 없다. */
   brief: z.object({ answerText: z.string(), patter: z.string().optional() }).nullable(),
+  /**
+   * 현재 라운드의 배점 (SET_POINTS 오버라이드 반영). 콘솔의 배점 입력칸이 이걸 보여준다 —
+   * 배신 라운드에서 "지금 얼마 걸려 있나"를 모르면 SET_POINTS가 도박이 된다.
+   */
+  basePoints: z.number().int().nullable(),
   submissions: z
     .array(
       z.object({
@@ -262,6 +268,10 @@ export const HostSnapshot = z.object({
    * 서버가 전이표에서 파생해서 내려주므로 콘솔이 상태머신을 재구현하지 않는다 → 드리프트 불가능.
    */
   legal: z.array(z.string()).readonly(),
+  /** 프로그램 전체. SEGMENT_GOTO 버튼이 이걸로 그려진다. current가 지금 위치. */
+  program: z.array(ProgramRow).readonly(),
+  /** 현재 세그먼트의 라운드 목록. ROUND_GOTO(라운드 스킵/점프)가 여기서 고른다. */
+  segmentRounds: z.array(z.object({ roundId: RoundId, index: z.number().int().positive() })).readonly(),
   health: z.object({
     db: z.enum(['OK', 'FAIL']),
     /** 빔 브라우저가 죽었으면 ★리빌을 누르기 전에★ 알아야 한다. */
@@ -288,16 +298,22 @@ export const PlaySnapshot = z.discriminatedUnion('view', [
     me: Me,
     roundId: RoundId,
     scope: AnswerScope,
-    /** 입력 UI를 그릴 정보만. ★문제 본문은 안 온다★ — 빔을 보게 하려고. */
-    prompt: z.unknown(),
+    /**
+     * 입력 UI를 그릴 정보만. ★문제 본문은 안 온다★ — 빔을 보게 하려고.
+     * 단계 2부터 unknown이 아니라 PlayPrompt다. 어휘에 본문 필드가 없어서
+     * "안 온다"가 규율이 아니라 타입이 됐다 (play.ts).
+     */
+    prompt: PlayPrompt,
     endsAt: EpochMs,
+    /** TEAM scope면 "우리 조 답"이다 — 내가 안 냈어도 조원이 냈으면 차 있다. by가 그 작성자. */
     mine: z
       .object({ value: z.unknown(), at: EpochMs, by: z.string().optional() })
       .nullable(),
   }),
   /** 탭 줄다리기 중. 버튼 하나. */
   z.object({ view: z.literal('TAP'), me: Me, matchId: MatchId, eligible: z.boolean() }),
-  z.object({ view: z.literal('HEADS_UP'), me: Me, mine: z.unknown().nullable() }),
+  /** scope가 있는 이유: "내 답"과 "우리 조 답"은 다른 문구다 — TEAM에서 "내 답"은 거짓말이 된다. */
+  z.object({ view: z.literal('HEADS_UP'), me: Me, scope: AnswerScope, mine: z.unknown().nullable() }),
   z.object({
     view: z.literal('RESULT'),
     me: Me,

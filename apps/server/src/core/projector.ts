@@ -10,9 +10,11 @@ import type {
   PlaySnapshot,
   RoundPhase,
   Scoreboard,
+  SubmissionRecord,
   TeamInfo,
 } from '@mt/protocol';
 import { LEGAL_TRANSITIONS } from '@mt/protocol';
+import { foldFinal } from './submissions.js';
 import type { ActiveRound, SessionState } from './state.js';
 
 /**
@@ -39,10 +41,13 @@ import type { ActiveRound, SessionState } from './state.js';
 export function projectDisplay(s: SessionState, board: Scoreboard): DisplayState {
   if (s.blackout) return { mode: 'BLACK' };
 
-  // 단계 1의 파생 규칙: 라운드가 돌면 ROUND, 아니면 세그먼트 표지(점수판).
-  // 단계 2에서 세그먼트에 kind가 생기면 SCOREBOARD_FULL / AWARD / ROUND 분기가 여기로 온다.
+  // 파생 규칙: 세그먼트 kind가 모드다. AWARD → 시상, GAME에서 라운드가 돌면 ROUND,
+  // 그 외 전부(SCOREBOARD 세그먼트, GAME의 라운드 소진 표지, 부팅 찰나)는 점수판 표지.
+  const seg = s.segment;
+  if (seg?.def.kind === 'AWARD') return { mode: 'AWARD', scoreboard: board };
+
   if (!s.round) {
-    return { mode: 'SCOREBOARD_FULL', title: s.segmentTitle, scoreboard: board };
+    return { mode: 'SCOREBOARD_FULL', title: seg?.def.title ?? '준비 중', scoreboard: board };
   }
   // ★미터의 분모가 scope를 따른다★ 퀴즈는 40명이 각자 내고(37/40), 배신 라운드는
   // 조가 낸다(5/6 조). 로스터 크기를 항상 쓰면 배신에서 "3/40"이 떠서 다 안 낸 것처럼 보인다.
@@ -152,6 +157,8 @@ export function projectHost(
     display: projectDisplay(s, board),
     // ★정답★ DisplayState엔 이 필드가 아예 없다.
     brief: r ? { answerText: r.spec.hostBrief.answerText, ...(r.spec.hostBrief.patter !== undefined ? { patter: r.spec.hostBrief.patter } : {}) } : null,
+    // SET_POINTS 입력칸 옆에 뜨는 현재 배점 — 얼마 걸려 있는지 모르면 배점 조정이 도박이다.
+    basePoints: r ? r.basePoints : null,
     submissions: r
       ? r.log.map((x) => ({
           participantId: x.participantId,
@@ -167,6 +174,14 @@ export function projectHost(
     totals,
     // ★서버가 전이표에서 파생해서 내려준다 → 콘솔이 상태머신을 재구현하지 않는다★
     legal: legalCommands(s),
+    program: s.program.map((d) => ({
+      segmentId: d.segmentId,
+      title: d.title,
+      kind: d.kind,
+      gameId: d.gameId,
+      current: s.segment?.def.segmentId === d.segmentId,
+    })),
+    segmentRounds: (s.segment?.rounds ?? []).map((spec) => ({ roundId: spec.roundId, index: spec.index })),
     health,
   };
 }
@@ -181,6 +196,14 @@ export function legalCommands(s: SessionState): string[] {
   if (s.entryOpen) out.push('CLOSE_ENTRY');
 
   const r = s.round;
+
+  // ★이동은 라운드가 안 도는 동안만★ (round.service canNavigate와 같은 규칙 —
+  // 여기는 버튼 표시용 파생일 뿐, 진짜 거절은 서버 메서드가 한다)
+  if (!r || ['IDLE', 'REACTION', 'ABORTED'].includes(r.phase)) {
+    out.push('SEGMENT_GOTO');
+    if (s.segment?.game) out.push('ROUND_GOTO');
+  }
+
   if (!r) return out;
 
   const can = (to: RoundPhase) => LEGAL_TRANSITIONS[r.phase].includes(to);
@@ -225,17 +248,17 @@ export function projectPlay(s: SessionState, me: Me, pid: ParticipantId): PlaySn
       return { view: 'WAIT', me, message: '화면을 보세요' };
 
     case 'COLLECT': {
-      const mine = latestOf(r, pid);
+      const mine = mineOf(s, r, me, pid);
       return {
         view: 'INPUT',
         me,
         roundId: r.spec.roundId,
         // 폰이 "내 답"인지 "우리 조 답"인지 알아야 UI 문구가 갈린다.
         scope: r.scope,
-        // ★문제 본문은 안 온다★ — 빔을 보게 하려고.
+        // ★문제 본문은 안 온다★ — 빔을 보게 하려고. (이제 어휘가 막는다 — play.ts)
         prompt: r.spec.playPrompt,
         endsAt: r.phaseEndsAt ?? r.phaseStartedAt,
-        mine: mine ? { value: mine.value, at: mine.at } : null,
+        mine,
       };
     }
 
@@ -243,8 +266,10 @@ export function projectPlay(s: SessionState, me: Me, pid: ParticipantId): PlaySn
     case 'LOCKED':
     case 'COUNTDOWN':
     case 'REVEAL': {
-      const mine = latestOf(r, pid);
-      return { view: 'HEADS_UP', me, mine: mine ? mine.value : null };
+      const mine = mineOf(s, r, me, pid);
+      // 값이 아니라 ★라벨★을 준다 — HEADS_UP은 표시 전용이라 'BETRAY'가 아니라 '🔪 배신'이 떠야 한다.
+      // (INPUT.mine은 값 그대로다 — 폰이 눌린 버튼을 찾는 키로 쓴다.)
+      return { view: 'HEADS_UP', me, scope: r.scope, mine: mine ? labelOf(r, mine.value) : null };
     }
 
     // 그땐 어차피 고개를 숙인다. "야 나 맞았어"가 오디오다.
@@ -272,8 +297,30 @@ function teamsWithMembers(s: SessionState): TeamInfo[] {
   }));
 }
 
-function latestOf(r: ActiveRound, pid: ParticipantId) {
-  let best: (typeof r.log)[number] | undefined;
-  for (const x of r.log) if (x.participantId === pid && (!best || x.revision >= best.revision)) best = x;
-  return best;
+/**
+ * 폰에 뜨는 "지금 답". ★scope가 주어를 바꾼다★
+ * PARTICIPANT: 내가 마지막으로 낸 것. TEAM: ★우리 조★의 현재 답 — 내가 안 냈어도
+ * 조원이 냈으면 차 있고, by가 그 작성자다. 이게 없으면 배신 라운드의 폰이
+ * "내 제출: 협력"을 띄우는 동안 조 답은 배신으로 덮여 있는, 적극적으로 틀린 화면이 된다.
+ * 접기 규칙은 잠금 채점과 같은 foldFinal 한 곳이다 (submissions.ts).
+ */
+/** 답 값 → 폰 라벨. 게임이 어휘(playPrompt)에 이미 적어놨다 — 여기서 새 표를 만들지 않는다. */
+function labelOf(r: ActiveRound, value: unknown): string {
+  const item = r.spec.playPrompt.items.find((it) => it.value === value);
+  return item?.label ?? String(value);
+}
+
+function mineOf(
+  s: SessionState,
+  r: ActiveRound,
+  me: Me,
+  pid: ParticipantId,
+): { value: unknown; at: EpochMs; by?: string } | null {
+  const rec: SubmissionRecord<unknown> | undefined =
+    r.scope === 'TEAM'
+      ? foldFinal(r.log, (x) => x.teamId).get(me.teamId)
+      : foldFinal(r.log, (x) => x.participantId).get(pid);
+  if (!rec) return null;
+  if (r.scope !== 'TEAM') return { value: rec.value, at: rec.at };
+  return { value: rec.value, at: rec.at, by: s.roster.get(rec.participantId)?.name ?? '?' };
 }

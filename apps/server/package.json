@@ -8,7 +8,9 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/main.js",
     "dev": "tsc -w -p tsconfig.json",
-    "verify": "node verify-loop.mjs"
+    "verify": "node verify-loop.mjs",
+    "db:seed": "node db/seed.mjs",
+    "db:seed:example": "node db/seed.mjs db/quiz.questions.example.json"
   },
   "dependencies": {
     "@mt/protocol": "*",
@@ -17,6 +19,7 @@
     "@nestjs/platform-express": "^10.4.15",
     "@nestjs/platform-socket.io": "^10.4.15",
     "@nestjs/websockets": "^10.4.15",
+    "pg": "^8.22.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.1",
@@ -24,6 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.20.0",
     "socket.io-client": "^4.8.3",
     "typescript": "^5.6.0"
   }

@@ -31,6 +31,7 @@ const SPACE_MAP: Record<string, HostCmd['c']> = {
 export function Host() {
   const [snap, setSnap] = useState<HostSnapshot | null>(null);
   const [log, setLog] = useState<string[]>([]);
+  const [points, setPoints] = useState('');
   const sockRef = useRef<Socket | null>(null);
   const snapRef = useRef<HostSnapshot | null>(null);
   snapRef.current = snap;
@@ -75,6 +76,11 @@ export function Host() {
   const phase = snap.display.mode === 'ROUND' ? snap.display.round.phase : snap.display.mode;
   const nextSpace = SPACE_MAP[phase];
   const can = (c: string) => snap.legal.includes(c);
+  const roundNow = snap.display.mode === 'ROUND' ? snap.display.round : null;
+
+  // 제출 로그에 조 이름을 붙일 표. 점수판이 이미 갖고 있다 — 새 계약 필드가 필요 없다.
+  const teamName: Record<string, string> = {};
+  if (snap.display.mode !== 'BLACK') for (const r of snap.display.scoreboard.rows) teamName[r.teamId] = r.name;
 
   return (
     <div style={{ minHeight: '100dvh', background: '#0a0a0a', color: '#ddd', padding: 20, fontFamily: 'ui-monospace, monospace', display: 'grid', gap: 16, gridTemplateColumns: '1fr 320px' }}>
@@ -110,12 +116,62 @@ export function Host() {
               {snap.display.mode === 'BLACK' ? '빔 복구 (N)' : '패닉 킬 (B)'}
             </Btn>
           </div>
+          {/* 배점 직접 입력 — 배신 라운드 밴드 튜닝 (events.ts SET_POINTS: IDLE..COLLECT에서만) */}
+          <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+            <span style={{ color: '#888', fontSize: 13 }}>배점 {snap.basePoints ?? '—'}</span>
+            <input
+              value={points}
+              onChange={(e) => setPoints(e.target.value)}
+              placeholder="새 배점"
+              inputMode="numeric"
+              style={{ width: 90, padding: '8px 10px', borderRadius: 8, border: '1px solid #333', background: '#000', color: TONE.HOT, fontFamily: 'inherit', fontSize: 13 }}
+            />
+            <Btn
+              on={can('SET_POINTS') && /^[1-9]\d*$/.test(points)}
+              onClick={() => { send({ c: 'SET_POINTS', basePoints: Number(points) }); setPoints(''); }}
+            >
+              적용
+            </Btn>
+          </div>
+        </Panel>
+
+        <Panel title="프로그램">
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {snap.program.map((p) => (
+              <Btn
+                key={p.segmentId}
+                on={can('SEGMENT_GOTO') && !p.current}
+                hot={p.current}
+                onClick={() => send({ c: 'SEGMENT_GOTO', segmentId: p.segmentId })}
+              >
+                {p.current ? '▶ ' : ''}{p.title}
+              </Btn>
+            ))}
+          </div>
+          {snap.segmentRounds.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+              {snap.segmentRounds.map((r) => (
+                <Btn
+                  key={r.roundId}
+                  on={can('ROUND_GOTO') && roundNow?.roundId !== r.roundId}
+                  hot={roundNow?.roundId === r.roundId}
+                  onClick={() => send({ c: 'ROUND_GOTO', roundId: r.roundId })}
+                >
+                  {r.index}
+                </Btn>
+              ))}
+            </div>
+          )}
         </Panel>
 
         <Panel title={`제출 ${snap.submissions.length}`}>
           <div style={{ maxHeight: 180, overflow: 'auto', fontSize: 13 }}>
-            {snap.submissions.map((s, i) => (
-              <div key={i} style={{ color: '#aaa' }}>{s.name} · {String(s.value)}{s.revision > 0 && <span style={{ color: TONE.BAD }}> (번복 {s.revision})</span>}</div>
+            {/* 최신이 위로 — 배신 라운드의 번복 전쟁은 마지막 줄들이 사건이다 */}
+            {[...snap.submissions].reverse().map((s, i) => (
+              <div key={i} style={{ color: '#aaa' }}>
+                <span style={{ color: '#666' }}>{teamName[s.teamId] ?? s.teamId}</span> {s.name} · {String(s.value)}
+                {s.revision > 0 && <span style={{ color: TONE.BAD }}> (번복 {s.revision})</span>}
+              </div>
             ))}
           </div>
         </Panel>
@@ -134,7 +190,8 @@ export function Host() {
           {snap.display.mode !== 'BLACK' && snap.display.scoreboard.rows.map((r) => (
             <div key={r.teamId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15 }}>
               <span>{r.rank}. {r.name}</span>
-              <b>{r.total}{r.lastDelta ? <span style={{ color: TONE.GOOD }}> +{r.lastDelta}</span> : null}</b>
+              {/* 부호를 하드코딩하면 배신 라운드의 음수가 "+-300"이 된다 — 실제로 그랬다 */}
+              <b>{r.total}{r.lastDelta ? <span style={{ color: r.lastDelta > 0 ? TONE.GOOD : TONE.BAD }}> {r.lastDelta > 0 ? `+${r.lastDelta}` : r.lastDelta}</span> : null}</b>
             </div>
           ))}
         </Panel>
@@ -156,8 +213,8 @@ const Panel = ({ title, children }: { title: string; children: React.ReactNode }
   </div>
 );
 
-/** ★서버가 내려준 legal로만 끈다. 콘솔이 상태머신을 재구현하지 않는다★ */
-const Btn = ({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) => (
+/** ★서버가 내려준 legal로만 끈다. 콘솔이 상태머신을 재구현하지 않는다★ hot = 현재 위치 표시. */
+const Btn = ({ on, hot = false, onClick, children }: { on: boolean; hot?: boolean; onClick: () => void; children: React.ReactNode }) => (
   <button
     disabled={!on}
     onClick={onClick}
@@ -165,8 +222,8 @@ const Btn = ({ on, onClick, children }: { on: boolean; onClick: () => void; chil
       padding: '10px 14px', borderRadius: 8, fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
       cursor: on ? 'pointer' : 'not-allowed',
       background: on ? '#1c1c1c' : '#0d0d0d',
-      color: on ? TONE.NEUTRAL : '#444',
-      border: `1px solid ${on ? TONE.NEUTRAL + '66' : '#222'}`,
+      color: hot ? TONE.HOT : on ? TONE.NEUTRAL : '#444',
+      border: `1px solid ${hot ? TONE.HOT : on ? TONE.NEUTRAL + '66' : '#222'}`,
     }}
   >
     {children}

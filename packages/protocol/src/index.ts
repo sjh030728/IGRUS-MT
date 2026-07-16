@@ -12,6 +12,7 @@ export * from './ids.js';
 export * from './session.js';
 export * from './phase.js';
 export * from './display.js';
+export * from './play.js';
 export * from './ledger.js';
 export * from './live.js';
 export * from './anticheat.js';

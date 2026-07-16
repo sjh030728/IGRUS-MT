@@ -8,6 +8,7 @@ import type {
   TeamId,
 } from './ids.js';
 import type { ContentChunks } from './display.js';
+import type { PlayPrompt } from './play.js';
 import type { LiveArmSpec, MatchOutcome, TapTugPayload } from './live.js';
 import type { RosterEntry, TeamInfo } from './session.js';
 
@@ -128,15 +129,24 @@ export interface HostBrief {
  * 3-투영에 주목: 같은 문제가 빔/폰/콘솔에 서로 다른 모양으로 간다.
  * CLAUDE.md "빔 뷰와 콘솔은 절대 같은 화면에 뜨면 안 된다"가 규율이 아니라 타입이 된다.
  */
-export interface RoundSpec<TPlayPrompt = unknown> {
+export interface RoundSpec {
   roundId: RoundId;
   segmentId: SegmentId;
   index: number;
   total: number;
   /** 빔. 정답 없음 — 타입에 필드 자체가 없다. */
   displayPrompt: { title: string; content: ContentChunks };
-  /** 폰. 입력 UI를 그릴 정보만. ★문제 본문은 안 간다★ */
-  playPrompt: TPlayPrompt;
+  /**
+   * 폰. 입력 UI를 그릴 정보만.
+   *
+   * ★제네릭(TPlayPrompt)이었는데 지웠다 — ScoreResult.reveal과 정확히 같은 수술이다★
+   * (단계 2에서 고침. reveal은 단계 1에서 같은 이유로 고쳤다 — decisions/0001)
+   *  - 폰이 받는 PlaySnapshot.prompt는 와이어를 건넌다. 와이어를 건너는 건 Zod다 (이 파일 상단)
+   *  - Game 유니온이 제네릭을 지우면 코어가 보는 playPrompt는 unknown이 되고,
+   *    unknown은 폰에 보낼 수는 있어도 폰이 그릴 수가 없다
+   *  - 문제 본문이 안 간다는 원칙도 주석에서 어휘로 내려갔다 — PlayPrompt엔 본문 필드가 없다
+   */
+  playPrompt: PlayPrompt;
   /** 콘솔 전용. 정답이 여기 있다. */
   hostBrief: HostBrief;
   basePoints: number;
@@ -182,7 +192,7 @@ export interface LoadCtx {
  * onPhaseEnter / beforeLock 같은 걸 열어주면 거기로 3번째 게임 타입이 기어들어온다.
  * 훅이 필요한 게임은 LockReveal이 아니고, 그러면 CLAUDE.md에 따라 만들지 않는다.
  */
-export interface LockRevealGame<TPlayPrompt = unknown, TAnswer = unknown> {
+export interface LockRevealGame<TAnswer = unknown> {
   readonly gameId: GameId;
   readonly kind: 'LOCK_REVEAL';
   readonly title: string;
@@ -195,20 +205,20 @@ export interface LockRevealGame<TPlayPrompt = unknown, TAnswer = unknown> {
    * ★반드시 결정적일 것. ORDER BY random() 금지★
    * 재시작 복구가 roundId 일치에 의존한다. 어차피 손으로 고른 8문제다.
    */
-  loadRounds(ctx: LoadCtx): Promise<readonly RoundSpec<TPlayPrompt>[]>;
+  loadRounds(ctx: LoadCtx): Promise<readonly RoundSpec[]>;
 
   /**
    * COLLECT 중 제출마다. 순수 함수.
    * ★unknown → ParseResult<T> 이 경계가 이 프로젝트에서 검증이 사는 유일한 지점이다★
    * 여기서 게임 모듈이 자기 Zod 스키마를 쓴다.
    */
-  parseAnswer(round: RoundSpec<TPlayPrompt>, raw: unknown): ParseResult<TAnswer>;
+  parseAnswer(round: RoundSpec, raw: unknown): ParseResult<TAnswer>;
 
   /**
    * LOCKED 진입 시 1회. 순수 + 결정적 (되감기/재시작 때 다시 돌아도 같은 답이 나와야 한다).
    * ★배수를 보지 못한다★ — 코어가 곱한다. 게임이 배수를 알면 두 곳에서 곱해진다.
    */
-  score(round: RoundSpec<TPlayPrompt>, bag: SubmissionBag<TAnswer>): ScoreResult;
+  score(round: RoundSpec, bag: SubmissionBag<TAnswer>): ScoreResult;
 }
 
 /**
@@ -253,10 +263,9 @@ export interface LiveGame<TPayload = TapTugPayload> {
  * 코어가 kind로 분기하는 곳은 정확히 한 군데(세그먼트 러너)뿐이다.
  *
  * ★never가 아니라 unknown인 이유★ (단계 1에서 고침)
- * 원래 <never, never, never>였는데 그러면 ★어떤 게임도 이 타입에 못 들어간다★.
- * loadRounds가 Promise<readonly RoundSpec<TPlayPrompt>[]>를 반환하는데 이건 공변 위치라,
- * RoundSpec<QuizPrompt>를 RoundSpec<never>에 넣으려면 QuizPrompt가 never에 대입돼야 한다.
- * 그런 타입은 없다. 즉 레지스트리가 비어 있을 때만 컴파일되는 타입이었다.
- * unknown은 반대 방향이라 전부 들어간다 — 지우개로 쓸 값은 바닥(never)이 아니라 천장(unknown)이다.
+ * 원래 <never, …>였는데 그러면 ★어떤 게임도 이 타입에 못 들어간다★ — 반환(공변) 위치라
+ * 구체 타입이 never에 대입돼야 하는데 그런 타입은 없다. 레지스트리가 비어 있을 때만
+ * 컴파일되는 타입이었다. 지우개로 쓸 값은 바닥(never)이 아니라 천장(unknown)이다.
+ * (TPlayPrompt 자리는 단계 2에서 제네릭 자체가 사라졌다 — playPrompt 주석 참고.)
  */
-export type Game = LockRevealGame<unknown, unknown> | LiveGame;
+export type Game = LockRevealGame<unknown> | LiveGame;

@@ -1,0 +1,24 @@
+# 로컬 Postgres — 문제 은행 + 원장 아카이브 전용 (CLAUDE.md).
+# 실시간 상태는 여기 없다. 서버 메모리에 산다 — 원칙 4.
+#
+#   docker compose up -d     # 켜기 (서버 부팅 전에. 안 켜면 서버가 이유를 찍고 죽는다)
+#   npm run db:seed -w @mt/server            # 문제은행 채우기 (실전 시드)
+#   npm run db:seed:example -w @mt/server    # 가짜 8문제로 채우기 (개발/리허설용)
+#
+# 데이터는 named volume에 남는다 — 컨테이너를 지워도 원장은 산다.
+# 완전 초기화: docker compose down -v
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: mt-postgres
+    environment:
+      POSTGRES_USER: mt
+      POSTGRES_PASSWORD: mt
+      POSTGRES_DB: mt
+    ports:
+      - '5432:5432'
+    volumes:
+      - mt-pgdata:/var/lib/postgresql/data
+
+volumes:
+  mt-pgdata:
