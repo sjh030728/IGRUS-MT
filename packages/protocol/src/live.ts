@@ -46,7 +46,7 @@ export const LEGAL_LIVE_TRANSITIONS: Readonly<Record<LivePhase, readonly LivePha
  *   인원수 정규화 → eligible = 조 전원,   norm() === eligible.length
  * 와이어 config는 0개다. 게임 모듈의 norm() 한 줄만 바뀐다.
  *
- * ★이 프로젝트의 결정: 대표 3명 제한★ (W1에서 확정)
+ * ★이 프로젝트의 결정: 대표 3명 제한★ (단계 0에서 확정)
  * 근거는 성공 기준이다. 전원 탭은 40명이 12분간 조용히 폰만 보는 구간이 된다.
  * 대표 3명은 37명이 소리를 지른다. 정규화가 더 공정하지만 더 조용하고,
  * CLAUDE.md의 기준은 공정성이 아니라 오디오다.
@@ -145,7 +145,7 @@ export type MatchResult = z.infer<typeof MatchResult>;
  *   pos ∝ (누적 탭 차이). ★중앙으로 돌아가는 감쇠 없음★
  *   감쇠를 넣으면 리드를 유지할 수 없고, 그러면 마지막 5초가 무의미해진다.
  *
- * K(민감도)와 DURATION은 W7 리허설에서 실측으로 맞춘다. 와이어로 보내지 않는다 —
+ * K(민감도)와 DURATION은 단계 5 리허설에서 실측으로 맞춘다. 와이어로 보내지 않는다 —
  * 현장에서 튜닝할 값이 아니라 리허설에서 확정할 값이다.
  */
 export const TAP_TUG_KO_THRESHOLD = 1000;

@@ -12,7 +12,7 @@ import type { LiveArmSpec, MatchOutcome, TapTugPayload } from './live.js';
 import type { RosterEntry, TeamInfo } from './session.js';
 
 /**
- * ★이 파일만 Zod가 아니라 순수 TypeScript인 이유★
+ * ★이 파일의 인터페이스가 Zod가 아니라 순수 TypeScript인 이유★
  *
  * Zod는 "런타임에도 검사가 필요한 것"에 쓴다. 즉 와이어를 건너오는 것 — 폰이 보낸 데이터.
  * 폰은 남의 컴퓨터라 뭐가 올지 모르니 실행 중에 확인해야 한다.
@@ -20,6 +20,12 @@ import type { RosterEntry, TeamInfo } from './session.js';
  * 이 파일의 인터페이스는 와이어를 안 건넌다. 우리 서버 코드가 우리 게임 모듈을 부르는
  * 함수 모양일 뿐이다. 컴파일러가 이미 다 잡아준다. 여기에 Zod를 쓰면
  * 런타임 비용만 내고 얻는 게 없다.
+ *
+ * ★예외가 정확히 하나다: AnswerScope★ 저건 z.enum이고, 이 파일의 유일한 Zod다.
+ * events.ts의 HostSnapshot이 `scope: AnswerScope`로 와이어에 싣기 때문이다.
+ * 규칙은 "이 파일은 Zod 금지"가 아니라 ★"와이어를 건너는 것만 Zod"★이고, 여기서 그걸
+ * 건너는 건 저거 하나다. (원래 이 문단이 "이 파일만 Zod가 아니라"로 시작했는데
+ * :1이 `import { z }`라 첫 줄부터 거짓이었다. 결정은 맞았고 서술이 틀렸다.)
  *
  * 경계는 parseAnswer()다 — unknown이 들어와서 T가 나가는 그 지점이 검증이 사는 유일한 곳이고,
  * 거기서 게임 모듈이 자기 Zod 스키마를 쓴다.
@@ -36,7 +42,9 @@ import type { RosterEntry, TeamInfo } from './session.js';
  *   - first-wins    = 게임 로직 (팀원 간 레이스)
  * 첫 멤버가 "해당없음"인 enum은 틀린 추상이다.
  *
- * 실제 게임 5개(퀴즈/배신/번역릴레이/슬라이더/두진실)가 전부 아래 2멤버로 커버된다.
+ * 퀴즈 · 배신 라운드 · 번역 릴레이가 전부 아래 2멤버로 커버된다.
+ * (슬라이더/두진실이 여기 있었는데 CLAUDE.md "이미 검토하고 뺀 것들"로 갔다.
+ *  개수를 안 쓰는 이유가 이거다 — 목록이 움직인다.)
  * fold가 필요한 게임은 fold를 자기 모듈 코드로 짠다. 지금 그런 게임은 0개다.
  */
 export const AnswerScope = z.enum([
@@ -91,7 +99,7 @@ export type ParseResult<T> =
 /**
  * 사회자가 REACTION에서 지목할 사람들.
  * ★이게 앱 전체에서 제일 중요한 데이터다★
- * docs/program-ops.md: 내부 퀴즈는 실행 10분에 리액션 9분이고, "정답 공개하고 'OO이 나와봐'
+ * docs/program-ops.md: 내부 퀴즈는 실행 8분에 리액션 8분이고, "정답 공개하고 'OO이 나와봐'
  * 하는 그 시간이 콘텐츠이지 낭비가 아니다. 앱이 점수만 띄우고 넘어가면 게임의 절반을 버리는 것."
  *
  * 개수가 아니라 ★이름★이어야 한다. 사회자가 손가락으로 가리킬 대상이다.
@@ -149,7 +157,8 @@ export interface ScoreResult {
    * 원래 TReveal = unknown 이었는데 코어가 그걸 쓸 수가 없었다:
    *  - 빔이 받는 DisplayRoundView.content는 ContentChunks다. 빔은 DisplayChunk 말고
    *    그릴 줄 아는 게 없고, 그게 청크 예산(MAX_CONTENT_CHUNKS)의 존재 이유다
-   *  - Game 유니온이 제네릭을 지운다(LockRevealGame<never, never>). 코어가 보는 reveal은 never다
+   *  - Game 유니온이 제네릭을 지운다(LockRevealGame<unknown, unknown> — 0009). 코어가 보는
+   *    reveal은 unknown이 되고, unknown은 그릴 수가 없다
    *  - reveal은 와이어에 자기 표현이 없다 — content를 통하지 않으면 빔에 갈 경로가 없다
    * 즉 제네릭이면 게임이 낸 리빌을 띄울 방법이 없다. displayPrompt.content가 이미
    * ContentChunks인 것과 대칭을 맞춘다 — 문제도 리빌도 같은 어휘로 그린다.
@@ -168,7 +177,7 @@ export interface LoadCtx {
  * ═══ LockReveal 게임 인터페이스 ═══
  *
  * CLAUDE.md 원칙 2: "문제 제시 → 입력 수집 → 잠금 → 카운트다운 → 동시 공개 → 채점"
- * 당일: 내부 퀴즈, 배신 라운드. 예비: 번역 릴레이, 슬라이더, 두 진실 한 거짓.
+ * 당일: 내부 퀴즈, 배신 라운드. 예비: 번역 릴레이 (정원 1개 — CLAUDE.md).
  *
  * ★메서드 3개. 라이프사이클 훅 없음★
  * onPhaseEnter / beforeLock 같은 걸 열어주면 거기로 3번째 게임 타입이 기어들어온다.
@@ -211,8 +220,8 @@ export interface LockRevealGame<TPlayPrompt = unknown, TAnswer = unknown> {
  *
  * ★게임이 직접 emit하거나 persist하지 않는다★ 엔진이 tick()을 20Hz로 부르고 결과를 뿌린다.
  * 게임은 순수한 누산기다. 탭 줄다리기 구현은 이 인터페이스 위에서 ~30줄이면 끝나는데,
- * 게임이 하찮은 게 계약이 제자리에 있다는 신호다 — W5는 "Live 엔진 + 탭 줄다리기"이고
- * 엔진이 그 주의 전부다.
+ * 게임이 하찮은 게 계약이 제자리에 있다는 신호다 — 단계 3이 "Live 엔진 + 탭 줄다리기"이고
+ * 엔진이 그 단계의 전부다.
  */
 export interface LiveGame<TPayload = TapTugPayload> {
   readonly gameId: GameId;

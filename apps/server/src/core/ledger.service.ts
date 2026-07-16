@@ -30,7 +30,7 @@ export class LedgerService {
   private nextSeq = 1;
 
   /**
-   * seq는 원장이 매긴다 (ledger.ts: "DB가 매긴다"). 호출자는 못 정한다.
+   * seq는 원장이 매긴다 (ids.ts: "DB가 매긴다"). 호출자는 못 정한다.
    *
    * ★이걸 DB로 돌리는 순간 docs/program-ops.md에 "서버가 죽으면" 절차가 필요해진다★
    * 지금은 못 쓴다 — 복구가 없으니 쓸 내용이 거짓이 된다. 복구를 만드는 게 이 함수라
