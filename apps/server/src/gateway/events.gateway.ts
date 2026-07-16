@@ -13,6 +13,7 @@ import {
   ParticipantId,
   PlayHello,
   PlaySubmit,
+  PlayTap,
   ResumeToken,
   TeamId,
   type EpochMs,
@@ -20,6 +21,7 @@ import {
 } from '@mt/protocol';
 import { DbService } from '../core/db.service.js';
 import { LedgerService } from '../core/ledger.service.js';
+import { LiveService } from '../core/live.service.js';
 import { RoundService } from '../core/round.service.js';
 import { projectDisplay, projectHost, projectPlay } from '../core/projector.js';
 
@@ -47,6 +49,7 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
 
   constructor(
     private readonly rounds: RoundService,
+    private readonly live: LiveService,
     private readonly ledger: LedgerService,
     private readonly db: DbService,
   ) {}
@@ -86,6 +89,12 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     this.rounds.changes$.subscribe(() => this.broadcast());
     // DB 미러가 죽거나 살아나면 콘솔 health가 그 즉시 바뀌어야 한다 — 사회자의 계기판이다.
     this.db.status$.subscribe(() => this.pushHost());
+
+    // ★스냅샷 우회 채널 2개★ (events.ts) — 빈도가 스냅샷을 태울 수 없는 것만.
+    // volatile: 늦은 프레임은 재전송이 아니라 폐기다 — 0.05초 전 바 위치는 쓰레기다.
+    this.live.frames$.subscribe((f) => this.server.to('display').volatile.emit('live:frame', f));
+    // 의심 목록은 ★host room에만★ (anticheat.ts — 빔에 오탐이 뜨면 그 밤이 끝난다).
+    this.live.hostTicks$.subscribe((t) => this.server.to('host').emit('live:hostTick', t));
   }
 
   async handleConnection(socket: Socket) {
@@ -142,6 +151,19 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     return this.rounds.submit(pid, p.data.roundId, p.data.value);
   }
 
+  /**
+   * 탭 배치. ★ack가 없다★ (events.ts C2S — 10Hz에 왕복을 달면 왕복이 2배가 된다)
+   * 검증 실패·비적격·상한 초과 전부 조용히 버린다 — 처리는 엔진(live.service)이 한다.
+   */
+  @SubscribeMessage('play:tap')
+  playTap(socket: Socket, payload: unknown) {
+    const pid = socket.data.participantId as ParticipantId | undefined;
+    if (!pid) return;
+    const p = PlayTap.safeParse(payload);
+    if (!p.success) return; // n=999999 같은 조작은 스키마가 여기서 끊는다 (verify §2)
+    this.live.tap(pid, socket.id, p.data.matchId, p.data.n, p.data.windowMs);
+  }
+
   // ── 빔 ────────────────────────────────────────────────────
 
   @SubscribeMessage('display:hello')
@@ -196,8 +218,15 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
       case 'SET_POINTS': return this.rounds.setPoints(cmd.basePoints) ? done : reject('IDLE..COLLECT 에서만');
       case 'DISPLAY_BLACKOUT': this.rounds.setBlackout(cmd.on); return done;
       case 'CLOSE_ENTRY': this.rounds.closeEntry(); return done;
+
+      // ── Live (단계 3) — 상태머신·멱등은 전부 엔진 소유. 여기는 라우팅뿐이다 ──
+      case 'LIVE_ARM': { const r = this.live.arm(cmd.spec); return r.ok ? done : reject(r.message); }
+      case 'LIVE_START': { const r = this.live.start(cmd.matchId); return r.ok ? done : reject(r.message); }
+      case 'LIVE_ABORT': { const r = this.live.abort(cmd.matchId); return r.ok ? done : reject(r.message); }
+      case 'LIVE_COMMIT': { const r = this.live.commit(cmd.matchId); return r.ok ? done : reject(r.message); }
+
       default:
-        // 나머지 명령(되감기/보정/낮PG/예비투입/Live/사람관리/SFX)은 단계 3~4다.
+        // 나머지 명령(되감기/보정/낮PG/예비투입/사람관리/SFX)은 단계 4다.
         // 계약엔 있고 구현이 없다 — 조용히 성공시키면 사회자가 눌렀는데 아무 일도 안 난다.
         return { ok: false as const, code: 'NOT_IMPLEMENTED', message: `${cmd.c}는 다음 단계` };
     }

@@ -26,14 +26,18 @@ import { EpochMs, ParticipantId, TeamId } from './ids.js';
  *
  * 넘친 탭은 "거절"이 아니라 그냥 버린다. 폰에 에러를 띄우면 정상 참가자가
  * 자기가 잘못한 줄 알고 손을 멈춘다. 조용히 상한선까지만 인정한다.
+ *
+ * ★계약은 구조만 굽는다 — 값(15/25)은 여기 없다★ (concepts/굽기)
+ * 값은 게임 모듈 상수다(tap-tug.game.ts의 RATE) — K·DURATION과 함께 리허설이 확정하는
+ * 자리라서다. 실측 반영이 계약 수정이 되면 안 되고, config로 빼면 7:30에 사람 손이
+ * 닿는다 — 치팅 방어의 상한을 현장에서 만지게 하면 안 된다. burst > perSec 같은
+ * 제정신 검사는 부팅 프리플라이트가 한다 (round.service — 7:30에 터뜨린다).
  */
 export const RateCap = z.object({
   perSec: z.number().int().positive(),
   burst: z.number().int().positive(),
 });
 export type RateCap = z.infer<typeof RateCap>;
-
-export const DEFAULT_TAP_RATE_CAP: RateCap = { perSec: 15, burst: 25 };
 
 /** 한 참가자의 매치 중 탭 통계. 메모리에만 산다. */
 export const TapStats = z.object({

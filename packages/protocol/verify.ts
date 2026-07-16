@@ -18,6 +18,12 @@ import {
   LEGAL_TRANSITIONS,
   AutoTransition,
   VOIDABLE_KINDS,
+  LEGAL_LIVE_TRANSITIONS,
+  LiveAutoTransition,
+  LiveArmSpec,
+  LiveSide,
+  TapTugPayload,
+  TAP_TUG_KO_THRESHOLD,
 } from './src/index.js';
 
 let pass = 0;
@@ -124,6 +130,58 @@ ok(
   'HEADS_UP엔 scope가 있어야 한다 — "내 답"과 "우리 조 답"은 다른 문구다',
   !PlaySnapshot.safeParse({ view: 'HEADS_UP', me: meFixture, mine: null }).success &&
     PlaySnapshot.safeParse({ view: 'HEADS_UP', me: meFixture, scope: 'TEAM', mine: null }).success,
+);
+
+console.log('\n[8] Live 계약 — 탭 줄다리기 (단계 3)');
+ok(
+  'ACTIVE에서 나가는 길은 ENDED뿐 — 매치는 되감을 수 없다. 무효는 VOID outcome이지 시간여행이 아니다',
+  LEGAL_LIVE_TRANSITIONS.ACTIVE.join() === 'ENDED',
+);
+ok('Live도 앱이 스스로 하는 전이는 정확히 2개 (GO 착지 + 매치 종료 — 물리지 판단이 아니다)', LiveAutoTransition.options.length === 2);
+ok(
+  'KO 임계 = 페이로드 경계 (±1000이 두 곳에서 어긋나면 바가 끝에 닿기 전에 매치가 끝난다)',
+  TAP_TUG_KO_THRESHOLD === 1000 &&
+    TapTugPayload.safeParse({ pos: 1000 }).success &&
+    !TapTugPayload.safeParse({ pos: 1001 }).success,
+);
+// non-strict Zod는 모르는 키를 거절이 아니라 ★조용히 벗겨낸다★ — safeParse로 검사하면
+// 있는 것처럼 초록불이 뜬다. "필드가 없다"는 shape로 확인해야 한다.
+ok('프레임에 남은 시간이 없다 (절대시각 원칙 — 타이머는 스냅샷 phaseEndsAt에서 파생)', !('remainMs' in TapTugPayload.shape));
+ok(
+  '콘솔은 matchId를 발명할 수 없다 — 서버가 채번한다 (콘솔 새로고침 후 재사용 → 멱등 커밋 충돌 → 점수 증발)',
+  !('matchId' in LiveArmSpec.shape) && !('roundId' in LiveArmSpec.shape),
+);
+ok('대진에 라벨·색이 없다 — 이름과 색은 점수판에서 파생한다 (진실 한 줄기)', !('label' in LiveSide.shape) && !('tone' in LiveSide.shape));
+ok(
+  'eligible 빈 배열 거절 (아무나 탭 가능한 매치는 매치가 아니다 — 치팅 위험 1위)',
+  !LiveSide.safeParse({ teamId: 't1', eligible: [] }).success,
+);
+// 레이트캡 ★값★은 여기서 못 본다 — 계약은 구조만 굽고(anticheat.ts) 값은 게임 모듈 상수다.
+// burst > perSec은 부팅 프리플라이트가, 상한이 실제로 자르는지는 verify-live(E2E 치터)가 본다.
+const liveBeam = DisplayState.parse({
+  mode: 'LIVE',
+  scoreboard: { rows: [], throughSeq: 0 },
+  card: {
+    matchId: 'm1',
+    a: { teamId: 't1', eligible: ['p1', 'p2', 'p3'] },
+    b: { teamId: 't2', eligible: ['p4', 'p5', 'p6'] },
+    basePoints: 500,
+    durationMs: 30000,
+  },
+  phase: 'ACTIVE',
+  phaseStartedAt: 1,
+  phaseEndsAt: 2,
+  pos: 0,
+  outcome: null,
+});
+ok(
+  '빔 LIVE에 의심 목록이 없다 (안티치트는 콘솔 전용 — 오탐을 빔에 띄우면 그 밤이 거기서 끝난다)',
+  !JSON.stringify(liveBeam).includes('flags') && !JSON.stringify(liveBeam).includes('dropped'),
+);
+ok(
+  'TAP 뷰엔 phase가 있어야 한다 — 대표가 GO 순간을 폰에서 알아야 첫 1초를 안 잃는다',
+  !PlaySnapshot.safeParse({ view: 'TAP', me: meFixture, matchId: 'm1', eligible: true }).success &&
+    PlaySnapshot.safeParse({ view: 'TAP', me: meFixture, matchId: 'm1', eligible: true, phase: 'ACTIVE', phaseEndsAt: null }).success,
 );
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===\n`);

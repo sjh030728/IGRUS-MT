@@ -71,6 +71,7 @@ export class RoundService implements OnModuleDestroy {
       program,
       segment: null, // bootstrap의 start()가 첫 세그먼트에 들어가며 채운다
       round: null,
+      match: null, // Live 세그먼트에서 LIVE_ARM이 채운다 (live.service — 엔진이 유일한 작성자)
       blackout: false,
       stateSeq: 0,
     };
@@ -101,7 +102,16 @@ export class RoundService implements OnModuleDestroy {
     for (const seg of this.state.program) {
       if (seg.kind !== 'GAME') continue;
       const game = this.games.get(seg.gameId!)!;
-      if (game.kind !== 'LOCK_REVEAL') continue; // Live 프리플라이트는 단계 3에서
+      if (game.kind !== 'LOCK_REVEAL') {
+        // Live는 적재할 라운드가 없다 — 상수 제정신 검사가 프리플라이트의 전부다.
+        // 값이 계약이 아니라 게임 모듈에 살아서(anticheat.ts) 검사도 여기(부팅)가 맡는다.
+        if (game.rate.burst <= game.rate.perSec) {
+          throw new Error(`[preflight] "${seg.segmentId}" 레이트캡 이상 — burst(${game.rate.burst})는 perSec(${game.rate.perSec})보다 커야 한다. 아니면 순간 연타가 전부 치터로 잡힌다`);
+        }
+        if (game.durationMs <= 0) throw new Error(`[preflight] "${seg.segmentId}" durationMs가 0 이하`);
+        console.log(`[preflight] ${seg.segmentId}: Live (${game.title}) OK — 상한 ${game.rate.perSec}/s·burst ${game.rate.burst}, ${game.durationMs / 1000}초`);
+        continue;
+      }
       const rounds = await game.loadRounds(this.loadCtx(seg.segmentId));
       if (rounds.length === 0) throw new Error(`[preflight] "${seg.segmentId}" 라운드 0개 — 문제은행을 확인하세요`);
       console.log(`[preflight] ${seg.segmentId}: ${rounds.length}라운드 OK`);
@@ -134,9 +144,12 @@ export class RoundService implements OnModuleDestroy {
    * 버리는 건 ABORT의 일이고, 그건 시끄럽다(빔에 "무효"가 뜬다).
    */
   async gotoSegment(segmentId: SegmentId): Promise<NavResult> {
-    if (!this.canNavigate()) return { ok: false, message: '라운드 진행 중 — 먼저 ABORT' };
+    if (!this.canNavigate()) return { ok: false, message: '라운드/매치 진행 중 — 먼저 커밋 또는 ABORT' };
     const def = this.state.program.find((s) => s.segmentId === segmentId);
     if (!def) return { ok: false, message: '프로그램에 없는 세그먼트' };
+
+    // ★세그먼트를 떠나면 매치는 무조건 죽는다★ 남겨두면 다음 세그먼트의 빔에 지난 바가 뜬다.
+    this.state.match = null;
 
     if (def.kind !== 'GAME') {
       this.state.segment = { def, game: null, rounds: [], cursor: 0 };
@@ -146,7 +159,14 @@ export class RoundService implements OnModuleDestroy {
     }
 
     const game = this.games.get(def.gameId!)!; // 생성자에서 대조 완료
-    if (game.kind !== 'LOCK_REVEAL') return { ok: false, message: 'Live 게임은 단계 3' };
+
+    if (game.kind === 'LIVE') {
+      // Live는 라운드가 없다. 진입하면 세그먼트 표지(점수판)가 뜨고, 매치는 LIVE_ARM이 연다.
+      this.state.segment = { def, game, rounds: [], cursor: 0 };
+      this.state.round = null;
+      this.bump();
+      return { ok: true };
+    }
 
     // ★게임당 1회. 문제은행 조회는 여기서 끝낸다★ (game.ts loadRounds)
     let rounds;
@@ -192,12 +212,17 @@ export class RoundService implements OnModuleDestroy {
 
   private canNavigate(): boolean {
     const r = this.state.round;
-    return !r || ['IDLE', 'REACTION', 'ABORTED'].includes(r.phase);
+    const roundIdle = !r || ['IDLE', 'REACTION', 'ABORTED'].includes(r.phase);
+    // 매치도 같은 규칙: 커밋됐거나 무효(VOID)인 ENDED만 떠날 수 있다.
+    // 미커밋 실결과를 넘어가면 점수가 조용히 증발한다 — 버리려면 ABORT(폐기)가 명시적 경로다.
+    const m = this.state.match;
+    const matchIdle = !m || (m.phase === 'ENDED' && (m.committed || m.outcome?.kind === 'VOID'));
+    return roundIdle && matchIdle;
   }
 
   private loadRoundAt(i: number): void {
     const seg = this.state.segment!;
-    const game = seg.game!;
+    const game = seg.game as LockRevealGame<unknown>; // rounds가 차 있으면 LockReveal이다 (gotoSegment)
     const spec = seg.rounds[i]!;
     seg.cursor = i;
     this.state.round = {
@@ -302,7 +327,8 @@ export class RoundService implements OnModuleDestroy {
     | { ok: false; reason: 'PHASE_CLOSED' | 'WRONG_ROUND' | 'NOT_IN_ROSTER' | 'INVALID'; message: string } {
     const r = this.state.round;
     const game = this.state.segment?.game;
-    if (!r || !game || r.phase !== 'COLLECT') return { ok: false, reason: 'PHASE_CLOSED', message: '마감됐어요' };
+    // kind 검사는 타입 좁히기다 — 라운드가 있으면 LockReveal이지만, 컴파일러는 그 불변식을 모른다.
+    if (!r || !game || game.kind !== 'LOCK_REVEAL' || r.phase !== 'COLLECT') return { ok: false, reason: 'PHASE_CLOSED', message: '마감됐어요' };
     // 재접속한 폰이 옛날 화면 상태로 제출하는 건 실제로 일어난다.
     if (r.spec.roundId !== roundId) return { ok: false, reason: 'WRONG_ROUND', message: '지난 문제예요' };
 
@@ -391,7 +417,8 @@ export class RoundService implements OnModuleDestroy {
     return game.score(r.spec, { ...base, scope: 'PARTICIPANT', final: foldFinal(r.log, (x) => x.participantId) });
   }
 
-  private bump(): void {
+  /** 상태 변경 공지. Live 엔진(live.service)도 match 슬롯을 바꾸고 이걸 부른다 — 그래서 public. */
+  bump(): void {
     this.state.stateSeq++;
     this.changes$.next();
   }

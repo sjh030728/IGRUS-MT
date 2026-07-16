@@ -62,11 +62,12 @@ SELECT * FROM session_ledger WHERE session_id = 's1' ORDER BY seq;
 
 ## 이 프로젝트에서
 
-**★이 레포엔 DB 코드가 아직 한 줄도 없다★** 서버는 이미 있고 `LedgerService`가 그 자리에
-앉아 있는데 **메모리다.** 파일이 대놓고 적어놨다 — "★단계 1은 메모리다. Postgres는 단계 2★"
-(`apps/server/src/core/ledger.service.ts`).
+단계 1엔 DB 코드가 한 줄도 없었다 — `LedgerService`가 메모리로만 돌았다. 단계 2에서
+`db.service.ts`가 들어왔고, 구조는 **"진실은 메모리, DB는 미러"**다: 읽기(점수판)는 전부
+메모리, 기입은 메모리에 먼저 쌓고 DB엔 비동기로 미러한다 — 커밋(리빌 직후)이 DB 지연에
+볼모로 잡히면 안 되기 때문이다 (`ledger.service.ts`).
 
-**그런데 계약이 DB를 이미 세 군데서 전제하고 있다.**
+**계약은 이 구조를 코드보다 먼저 세 군데서 전제하고 있었다.**
 
 ### 1. `ledger.ts` — 복구 절차가 이미 SQL로 적혀 있다
 
@@ -78,7 +79,7 @@ SELECT * FROM session_ledger WHERE session_id = 's1' ORDER BY seq;
 복구 코드를 따로 안 짜는 이유는 [[append-only-원장과-fold]]에 있다 — 쌓기만 하고 지우지
 않으니, 복구가 "처음부터 다시 더하기"로 끝난다.
 
-`LedgerEntry` 4종이 테이블로 내려가면 대충 이렇게 된다:
+`LedgerEntry` 4종을 테이블로 내리는 상상도를 그리면 이렇다 — 열을 전부 펼치는 방식이다:
 
 ```
 session_ledger
@@ -88,10 +89,13 @@ session_ledger
    3 | s1         | 1721107200000 | HOST | VOID   | 2번 무효
 ```
 
-`kind` 열이 [[판별-유니온]]의 판별자 그대로다. **다만 판별 유니온을 테이블로 어떻게
-내리냐가 아직 안 정해진 설계 논점이다** — 멤버마다 필드가 다르니, 열을 전부 펼치고 안 쓰는
-건 NULL로 두든지(`SEED`엔 `voidsSeq`가 없다), 공통 열만 두고 나머지는 JSON 한 덩어리로
-넣든지(Postgres의 `jsonb` 타입) 골라야 한다. 단계 2에서 부딪힐 문제다.
+`kind` 열이 [[판별-유니온]]의 판별자 그대로다. 판별 유니온을 테이블로 내리는 길은 둘이었다 —
+위처럼 열을 전부 펼치고 안 쓰는 건 NULL로 두든지(`SEED`엔 `voidsSeq`가 없다), 공통 열만 두고
+나머지는 JSON 한 덩어리로 넣든지. **단계 2는 후자를 골랐다**: 실제 테이블은
+`session_ledger(session_id, seq, entry)`이고 기입 전체가 `entry`에 JSON으로 들어간다. 읽을 땐
+`LedgerEntry.parse`로 되살린다 — "과거 세션 데이터가 지금 계약과 어긋나면 조용히 이상한
+점수가 아니라 부팅 에러가 낫다"(`db.service.ts`). 열을 안 펼쳤으니 `kind`가 늘어도 테이블
+스키마는 안 변한다.
 
 ### 2. `game.ts` — 문제 은행이 Postgres에 있다
 
@@ -100,7 +104,7 @@ session_ledger
  * 세그먼트 투입 시 1회. 문제은행(Postgres) 조회는 여기서 끝낸다.
  * ★라운드 진행 중 DB 접근 금지★ — 8시 35분에 쿼리가 느려지면 리빌이 늦는다.
  */
-loadRounds(ctx: LoadCtx): Promise<readonly RoundSpec<TPlayPrompt>[]>;
+loadRounds(ctx: LoadCtx): Promise<readonly RoundSpec[]>;
 ```
 
 DB를 **쓰는 시점을 계약이 제한한다.** 세그먼트 시작할 때 8문제를 통째로 읽고 끝. 라운드가
@@ -121,6 +125,9 @@ health: z.object({
 사회자 콘솔의 건강 패널에 `db` 항목이 있다. **DB가 죽어도 프로그램은 계속 돌아야 한다**는
 뜻이다 — 실시간 상태는 메모리에 있으니 게임은 진행되고, 다만 사회자가 "지금 점수가 저장이
 안 되고 있다"를 알아야 한다.
+
+단계 2 구현이 정확히 그렇다 — `db.service.ts`의 미러 큐는 실패한 기입을 버리지 않고 3초
+간격으로 재시도하고, DB가 돌아오면 밀린 걸 순서대로 흘린다. 그동안 콘솔 health만 FAIL로 바뀐다.
 
 ## 언제 쓰고 언제 안 쓰나
 
@@ -170,8 +177,9 @@ DB에 안 넣는다. 초당 20번 바뀌는 걸 DB에 쓰면 DB가 병목이 되
 CLAUDE.md가 Postgres를 고른 이유는 명시돼 있지 않다. "이후 행사 재사용을 전제로 설계한다"와
 `jsonb` 같은 기능 때문으로 읽히지만 추측이다.
 
-**이건 개발 세션에서 판단할 것.** 개념 노트가 정할 문제가 아니다. 단계 2에서 원장 영속화를
-짤 때가 결정 시점이고, 결정하면 `docs/decisions/`에 남는 게 맞다.
+단계 2는 결국 Postgres + Docker로 붙었다(`db.service.ts`, `docker-compose.yml`). 다만
+"왜 SQLite가 아닌가"는 어디에도 안 적혔다 — ADR감인지는 개발 세션 판단이고, findings 큐로
+넘겨뒀다. 위의 SQLite 논거 자체는 일반론이라 다음 프로젝트에서 그대로 쓴다.
 
 ---
 

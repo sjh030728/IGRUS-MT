@@ -1,5 +1,5 @@
 {
-  "_help": "그날의 데이터. 고치고 서버만 재시작하면 된다 (빌드 불필요). 조는 2~6개. 색은 GREEN PINK YELLOW CYAN ORANGE PURPLE 중에서 겹치지 않게 — 빔에서 같은 색이면 점수판을 구분 못 한다. 총 인원과 조당 인원은 여기서 안 정한다: 폰이 접속하면 로스터가 자란다. program이 그날의 라인업이다 — 첫 항목이 부팅 화면, kind는 SCOREBOARD(점수판 표지)/GAME(game 필수)/AWARD(시상). 탭 줄다리기는 단계 3에서 추가된다. 틀리면 서버가 부팅 때 이유를 찍고 죽는다.",
+  "_help": "그날의 데이터. 고치고 서버만 재시작하면 된다 (빌드 불필요). 조는 2~6개. 색은 GREEN PINK YELLOW CYAN ORANGE PURPLE 중에서 겹치지 않게 — 빔에서 같은 색이면 점수판을 구분 못 한다. 총 인원과 조당 인원은 여기서 안 정한다: 폰이 접속하면 로스터가 자란다. program이 그날의 라인업이다 — 첫 항목이 부팅 화면, kind는 SCOREBOARD(점수판 표지)/GAME(game 필수)/AWARD(시상). 틀리면 서버가 부팅 때 이유를 찍고 죽는다.",
 
   "sessionId": "igrus-mt-2026",
   "title": "IGRUS MT 결승전",
@@ -14,6 +14,7 @@
   "program": [
     { "id": "seg-open", "kind": "SCOREBOARD", "title": "낮 점수 현황" },
     { "id": "seg-quiz", "kind": "GAME", "game": "quiz", "title": "동아리 내부 퀴즈" },
+    { "id": "seg-tug", "kind": "GAME", "game": "tap-tug", "title": "탭 줄다리기" },
     { "id": "seg-betrayal", "kind": "GAME", "game": "betrayal", "title": "배신 라운드" },
     { "id": "seg-award", "kind": "AWARD", "title": "시상" }
   ]

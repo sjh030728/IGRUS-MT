@@ -55,9 +55,8 @@ export function Chunk({ c }: { c: DisplayChunk }) {
     case 'bignum':
       return <BigNum />;
 
-    case 'tugbar':
-      // 단계 3(Live 엔진). 계약엔 있고 화면은 아직 없다.
-      return null;
+    // tugbar 케이스가 있었는데 어휘에서 빠졌다 — 줄다리기는 청크가 아니라 LIVE 모드
+    // 전용 화면(display/Live.tsx)이다. 빠짐없음 검사가 이 주석의 사실 여부를 지킨다.
   }
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
-import type { HostCmd, HostSnapshot } from '@mt/protocol';
+import type { HostCmd, HostSnapshot, SuspectRow, TapTugPayload } from '@mt/protocol';
 import { connect } from '../socket.js';
 import { TONE, glow } from '../theme.js';
 
@@ -32,6 +32,7 @@ export function Host() {
   const [snap, setSnap] = useState<HostSnapshot | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [points, setPoints] = useState('');
+  const [tick, setTick] = useState<{ matchId: string; payload: TapTugPayload; suspects: readonly SuspectRow[] } | null>(null);
   const sockRef = useRef<Socket | null>(null);
   const snapRef = useRef<HostSnapshot | null>(null);
   snapRef.current = snap;
@@ -47,6 +48,8 @@ export function Host() {
     sockRef.current = socket;
     socket.on('connect', () => socket.emit('host:hello', { token: 'mt-host' }, (r: { ok: boolean; state?: HostSnapshot }) => r.state && setSnap(r.state)));
     socket.on('state:host', (s: HostSnapshot) => setSnap(s));
+    // ★의심 목록은 host room에만 온다★ (anticheat.ts) — 2Hz. 빔엔 이 채널이 없다.
+    socket.on('live:hostTick', (t: { matchId: string; payload: TapTugPayload; suspects: readonly SuspectRow[] }) => setTick(t));
     return () => { socket.close(); };
   }, []);
 
@@ -135,6 +138,17 @@ export function Host() {
           </div>
         </Panel>
 
+        {/* Live 세그먼트에서만 뜬다 — LIVE_ARM이 legal이거나 매치가 있으면 그 세그먼트다. */}
+        {(can('LIVE_ARM') || snap.live) && (
+          <LivePanel
+            snap={snap}
+            tick={tick}
+            teamName={teamName}
+            can={can}
+            send={send}
+          />
+        )}
+
         <Panel title="프로그램">
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {snap.program.map((p) => (
@@ -201,6 +215,140 @@ export function Host() {
             {log.map((l, i) => <div key={i} style={{ fontSize: 12, color: TONE.BAD }}>{l}</div>)}
           </Panel>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * ═══ 탭 줄다리기 콘솔 ═══
+ *
+ * ★대진은 사회자가 고른다. 브래킷 로직은 서버에 없다★ (live.ts LiveArmSpec)
+ * "부전승도, 재경기도, '야 너네 둘이 붙어봐'도 전부 그냥 매치 하나다."
+ * matchId는 서버가 채번한다 — 여기선 스냅샷의 matchId를 되돌려줄 뿐이다.
+ */
+function LivePanel({ snap, tick, teamName, can, send }: {
+  snap: HostSnapshot;
+  tick: { matchId: string; payload: TapTugPayload; suspects: readonly SuspectRow[] } | null;
+  teamName: Record<string, string>;
+  can: (c: string) => boolean;
+  send: (c: HostCmd) => void;
+}) {
+  const teamIds = Object.keys(teamName);
+  const [teamA, setTeamA] = useState(teamIds[0] ?? '');
+  const [teamB, setTeamB] = useState(teamIds[1] ?? '');
+  const [repsA, setRepsA] = useState<string[]>([]);
+  const [repsB, setRepsB] = useState<string[]>([]);
+  const [pts, setPts] = useState('500');
+
+  const m = snap.live;
+  const suspects = tick && m && tick.matchId === m.card.matchId ? tick.suspects : [];
+
+  const arm = () =>
+    send({
+      c: 'LIVE_ARM',
+      spec: {
+        a: { teamId: teamA, eligible: repsA },
+        b: { teamId: teamB, eligible: repsB },
+        basePoints: Number(pts),
+      },
+    } as unknown as HostCmd); // 브랜드 타입은 와이어에서 문자열이다 — 서버 Zod가 다시 도장 찍는다
+
+  return (
+    <Panel title={`탭 줄다리기 ${m ? `— ${m.phase}${m.committed ? ' (커밋됨)' : ''}` : ''}`}>
+      {/* ── 대진 세팅 (매치 없거나 끝났을 때) ── */}
+      {can('LIVE_ARM') && (
+        <div style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <SidePicker label="A (왼쪽)" teams={teamIds} teamName={teamName} team={teamA} setTeam={(t) => { setTeamA(t); setRepsA([]); }} reps={repsA} setReps={setRepsA} roster={snap.roster} />
+            <SidePicker label="B (오른쪽)" teams={teamIds} teamName={teamName} team={teamB} setTeam={(t) => { setTeamB(t); setRepsB([]); }} reps={repsB} setReps={setRepsB} roster={snap.roster} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ color: '#888', fontSize: 13 }}>걸린 점수</span>
+            <input value={pts} onChange={(e) => setPts(e.target.value)} inputMode="numeric"
+              style={{ width: 70, padding: '8px 10px', borderRadius: 8, border: '1px solid #333', background: '#000', color: TONE.HOT, fontFamily: 'inherit', fontSize: 13 }} />
+            {/* 대표 3명 제한은 규칙이지 계약이 아니다 — 계약은 min 1 (live.ts). 콘솔이 3명을 권장만 한다. */}
+            <Btn on={repsA.length > 0 && repsB.length > 0 && teamA !== teamB && /^[1-9]\d*$/.test(pts)} onClick={arm}>
+              대진 확정 (ARM)
+            </Btn>
+            {(repsA.length > 3 || repsB.length > 3) && <span style={{ color: TONE.BAD, fontSize: 12 }}>대표는 3명 권장</span>}
+          </div>
+        </div>
+      )}
+
+      {/* ── 진행 (매치 있을 때) ── */}
+      {m && (
+        <div style={{ display: 'grid', gap: 8, marginTop: can('LIVE_ARM') ? 12 : 0 }}>
+          <div style={{ fontSize: 15 }}>
+            <b style={{ color: TONE.NEUTRAL }}>{teamName[m.card.a.teamId] ?? m.card.a.teamId}</b>
+            <span style={{ color: '#666' }}> vs </span>
+            <b style={{ color: TONE.NEUTRAL }}>{teamName[m.card.b.teamId] ?? m.card.b.teamId}</b>
+            <span style={{ color: TONE.HOT }}> · {m.card.basePoints}점</span>
+            {tick && tick.matchId === m.card.matchId && m.phase === 'ACTIVE' && (
+              <span style={{ color: '#888' }}> · 바 {tick.payload.pos}</span>
+            )}
+            {m.outcome && (
+              <span style={{ color: TONE.GOOD }}>
+                {' '}· {m.outcome.kind === 'VOID' ? '무효' : m.outcome.kind === 'KO' ? `KO — ${teamName[m.outcome.winner] ?? ''} 승` : m.outcome.winner ? `타임업 — ${teamName[m.outcome.winner] ?? ''} 승` : '타임업 — 무승부'}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Btn on={can('LIVE_START')} onClick={() => send({ c: 'LIVE_START', matchId: m.card.matchId })}>시작 (3-2-1)</Btn>
+            {/* ★커밋이 Live의 점수 영속화 지점이다★ 라운드의 ROUND_SCORE와 한 쌍. */}
+            <Btn on={can('LIVE_COMMIT')} onClick={() => send({ c: 'LIVE_COMMIT', matchId: m.card.matchId })}>점수 커밋</Btn>
+            <Btn on={can('LIVE_ABORT')} onClick={() => send({ c: 'LIVE_ABORT', matchId: m.card.matchId })}>중단/폐기</Btn>
+          </div>
+        </div>
+      )}
+
+      {/* ── 의심 목록 — ★앱은 절대 자동 조치하지 않는다★ (anticheat.ts) ── */}
+      {suspects.length > 0 && (
+        <div style={{ marginTop: 12, borderTop: '1px solid #333', paddingTop: 8 }}>
+          <div style={{ fontSize: 11, color: TONE.BAD, marginBottom: 6 }}>의심 — 마이크로 처리하세요 ("야 손 들어봐"). 조치는 ADJUST/MUTE로.</div>
+          {suspects.map((x) => (
+            <div key={x.participantId} style={{ fontSize: 12, color: '#aaa' }}>
+              <b style={{ color: TONE.BAD }}>{x.name}</b> ({teamName[x.teamId] ?? x.teamId}) · {x.flags.join(', ')} ·
+              인정 {x.stats.credited} / 버림 {x.stats.dropped} · 피크 {x.stats.peakPerSec}/s · 간격편차 {x.stats.intervalStdevMs}ms
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/** 한쪽 편 고르기: 조 하나 + 그 조의 접속자 중 대표들. 로스터가 파생 원천이다 (config가 아니라). */
+function SidePicker({ label, teams, teamName, team, setTeam, reps, setReps, roster }: {
+  label: string;
+  teams: string[];
+  teamName: Record<string, string>;
+  team: string;
+  setTeam: (t: string) => void;
+  reps: string[];
+  setReps: (r: string[]) => void;
+  roster: HostSnapshot['roster'];
+}) {
+  const members = roster.filter((r) => r.teamId === team);
+  return (
+    <div style={{ border: '1px solid #222', borderRadius: 8, padding: 10 }}>
+      <div style={{ fontSize: 11, color: '#777', marginBottom: 6 }}>{label}</div>
+      <select value={team} onChange={(e) => setTeam(e.target.value)}
+        style={{ width: '100%', padding: 6, background: '#000', color: TONE.NEUTRAL, border: '1px solid #333', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }}>
+        {teams.map((t) => <option key={t} value={t}>{teamName[t]}</option>)}
+      </select>
+      <div style={{ maxHeight: 110, overflow: 'auto', marginTop: 6, display: 'grid', gap: 2 }}>
+        {members.length === 0 && <span style={{ color: '#555', fontSize: 12 }}>접속한 조원 없음</span>}
+        {members.map((p) => (
+          <label key={p.participantId} style={{ fontSize: 13, color: p.connected ? '#ccc' : '#555', display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={reps.includes(p.participantId)}
+              onChange={(e) => setReps(e.target.checked ? [...reps, p.participantId] : reps.filter((x) => x !== p.participantId))}
+            />
+            {p.name}{!p.connected && ' (끊김)'}
+          </label>
+        ))}
       </div>
     </div>
   );

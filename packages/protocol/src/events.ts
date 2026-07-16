@@ -12,7 +12,7 @@ import {
 } from './ids.js';
 import { DisplayState, SfxCue } from './display.js';
 import { LedgerEntry } from './ledger.js';
-import { LiveArmSpec, LiveFrame, LivePhase, MatchCard, MatchResult, TapTugPayload } from './live.js';
+import { LiveArmSpec, LiveFrame, LivePhase, MatchCard, MatchOutcome, TapTugPayload } from './live.js';
 import { Me, ProgramRow, RosterEntry, Scoreboard, TeamInfo } from './session.js';
 import { SuspectRow } from './anticheat.js';
 import { AnswerScope } from './game.js';
@@ -34,7 +34,12 @@ import { PlayPrompt } from './play.js';
  * 전이가 일어나면 각 역할한테 "지금 니 화면 상태 전부"를 통째로 보낸다.
  * 40 클라이언트 × LAN × ~4KB면 아무 문제 없고, 재접속이 스냅샷 1발로 끝난다.
  * (델타 병합도, 리플레이도, 순서 버그도 없다.)
- * 예외는 live:frame 하나뿐 — 20Hz라 스냅샷을 태울 수 없어서 따로 나간다.
+ *
+ * ★스냅샷을 우회하는 채널은 정확히 2개다★ — 빈도가 스냅샷을 태울 수 없는 것만:
+ *   live:frame(20Hz 빔) / live:hostTick(2Hz 콘솔 의심 목록).
+ * live:armed·live:phase·live:result 가 여기 있었는데 뺐다 (단계 3) — 전이 빈도 정보는
+ * 전부 스냅샷에 탄다. 별도 이벤트로 두면 재접속 때 놓친 이벤트를 복구할 수 없고,
+ * "빔에 뭐가 떠 있나"의 진실이 두 줄기가 된다 (decisions/0002와 같은 병).
  */
 
 /** 모든 요청의 응답 모양. */
@@ -185,9 +190,14 @@ export const HostCmd = z.discriminatedUnion('c', [
   z.object({ c: z.literal('SEGMENT_INJECT'), gameId: GameId, after: SegmentId.optional() }),
 
   // ── Live ──
-  /** 대진 확정. 사회자가 두 조를 직접 고른다 — 브래킷 로직은 서버에 없다. */
+  /**
+   * 대진 확정. 사회자가 두 조를 직접 고른다 — 브래킷 로직은 서버에 없다.
+   * ★matchId는 서버가 채번한다★ 콘솔은 이후 명령에서 스냅샷의 matchId를 되돌려준다 —
+   * 늦게 도착한 클릭이 다음 매치를 조작하는 걸 막는다 (제출의 WRONG_ROUND와 같은 원리).
+   */
   z.object({ c: z.literal('LIVE_ARM'), spec: LiveArmSpec }),
   z.object({ c: z.literal('LIVE_START'), matchId: MatchId }),
+  /** phase 의존: ARMED→해산 / COUNTDOWN→ARMED로 / ACTIVE→VOID로 종결 / ENDED(미커밋)→폐기. */
   z.object({ c: z.literal('LIVE_ABORT'), matchId: MatchId }),
   /** 매치 커밋. ★matchId에 대해 멱등★ — 두 번 눌러도 점수가 두 번 안 들어간다. */
   z.object({ c: z.literal('LIVE_COMMIT'), matchId: MatchId }),
@@ -272,6 +282,23 @@ export const HostSnapshot = z.object({
   program: z.array(ProgramRow).readonly(),
   /** 현재 세그먼트의 라운드 목록. ROUND_GOTO(라운드 스킵/점프)가 여기서 고른다. */
   segmentRounds: z.array(z.object({ roundId: RoundId, index: z.number().int().positive() })).readonly(),
+  /**
+   * 진행 중인 매치. 라운드의 brief/basePoints가 별도 필드인 것과 같은 대칭이다.
+   * ★display 미리보기에서 파생하면 안 되는 이유★: 블랙아웃 중엔 display가 BLACK이라,
+   * 패닉 킬 중에 콘솔이 매치를 못 보게 된다 — COMMIT을 눌러야 할 수도 있는데.
+   */
+  live: z
+    .object({
+      phase: LivePhase,
+      phaseStartedAt: EpochMs,
+      phaseEndsAt: EpochMs.nullable(),
+      card: MatchCard,
+      /** ENDED에서만 non-null. */
+      outcome: MatchOutcome.nullable(),
+      /** 멱등 커밋의 상태. true면 LIVE_COMMIT이 legal에서 빠진다. */
+      committed: z.boolean(),
+    })
+    .nullable(),
   health: z.object({
     db: z.enum(['OK', 'FAIL']),
     /** 빔 브라우저가 죽었으면 ★리빌을 누르기 전에★ 알아야 한다. */
@@ -310,8 +337,19 @@ export const PlaySnapshot = z.discriminatedUnion('view', [
       .object({ value: z.unknown(), at: EpochMs, by: z.string().optional() })
       .nullable(),
   }),
-  /** 탭 줄다리기 중. 버튼 하나. */
-  z.object({ view: z.literal('TAP'), me: Me, matchId: MatchId, eligible: z.boolean() }),
+  /**
+   * 탭 줄다리기 중. 대표는 버튼 하나, 나머지 37명은 응원 화면(eligible=false).
+   * ★phase가 있는 이유★: 대표 폰이 "대기 → 3-2-1 → 쳐!"를 스스로 그려야 한다.
+   * GO 순간에 버튼을 더듬으면 첫 1초를 잃는다 — phaseEndsAt(COUNTDOWN)이 GO의 시각이다.
+   */
+  z.object({
+    view: z.literal('TAP'),
+    me: Me,
+    matchId: MatchId,
+    eligible: z.boolean(),
+    phase: LivePhase,
+    phaseEndsAt: EpochMs.nullable(),
+  }),
   /** scope가 있는 이유: "내 답"과 "우리 조 답"은 다른 문구다 — TEAM에서 "내 답"은 거짓말이 된다. */
   z.object({ view: z.literal('HEADS_UP'), me: Me, scope: AnswerScope, mine: z.unknown().nullable() }),
   z.object({
@@ -350,14 +388,13 @@ export interface S2C {
   'state:host': (s: HostSnapshot) => void;
   'state:play': (s: PlaySnapshot) => void;
 
-  /** ★display room만. 20Hz. volatile★ 스냅샷 투영기를 우회하는 유일한 채널이다. */
+  /**
+   * ★display room만. 20Hz. volatile★ 스냅샷 투영기를 우회하는 채널 1/2.
+   * 매치의 고정 정보(대진·배점)는 여기 없다 — 스냅샷의 MatchCard가 이미 갖고 있다.
+   */
   'live:frame': (f: LiveFrame) => void;
-  /** ARM 될 때 1회. 고정 정보를 여기서 미리 줘서 프레임을 작게 유지한다. */
-  'live:armed': (c: MatchCard) => void;
-  /** ★host room만. 2Hz★ 작고 빠른 건 빔에, 크고 느린 건 콘솔에. */
+  /** ★host room만. 2Hz. 우회 채널 2/2★ 작고 빠른 건 빔에, 크고 느린 건 콘솔에. */
   'live:hostTick': (t: { matchId: MatchId; payload: TapTugPayload; suspects: readonly SuspectRow[] }) => void;
-  'live:phase': (p: { matchId: MatchId; phase: LivePhase; phaseStartedAt: EpochMs }) => void;
-  'live:result': (r: MatchResult) => void;
 
   /** display room만. 사회자가 사운드보드를 누른 것. */
   'sound:sfx': (p: { cue: SfxCue; at: EpochMs }) => void;

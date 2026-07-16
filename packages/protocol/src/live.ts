@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { EpochMs, MatchId, ParticipantId, RoundId, TeamId } from './ids.js';
-import { Tone } from './display.js';
+import { EpochMs, MatchId, ParticipantId, TeamId } from './ids.js';
 
 /**
  * Live 게임의 진행 단계. CLAUDE.md 원칙 2:
@@ -30,9 +29,24 @@ export const LEGAL_LIVE_TRANSITIONS: Readonly<Record<LivePhase, readonly LivePha
   IDLE: ['ARMED'],
   ARMED: ['COUNTDOWN', 'IDLE'],
   COUNTDOWN: ['ACTIVE', 'ARMED'], // ABORT 시 ARMED로 되돌림
+  // ★ACTIVE에서 나가는 길은 ENDED뿐이다★ 매치를 중간에 되감을 수 없다 —
+  // 잘못된 매치는 outcome VOID로 끝내는 것이지 시간을 되돌리는 게 아니다.
   ACTIVE: ['ENDED'],
   ENDED: ['ARMED', 'IDLE'], // 다음 매치 또는 라운드 종료
 } as const;
+
+/**
+ * ★앱이 사회자 없이 스스로 하는 Live 전이는 이 둘뿐이다★
+ * phase.ts의 AutoTransition과 한 쌍 — 라운드 머신에 2개, 매치 머신에 2개. verify가 둘 다 센다.
+ *
+ *  - COUNTDOWN_ZERO: "3-2-1-GO"의 GO. 프레임 단위로 정확히 착지해야 한다.
+ *  - MATCH_END:      KO(±1000 도달) 또는 시간 종료. ★물리지 판단이 아니다★ —
+ *                    바가 끝에 닿았는데 사회자 손을 기다리면 방 전체가 본 승리가 앱에서 지연된다.
+ *
+ * ARMED → COUNTDOWN(LIVE_START)과 ENDED → 커밋(LIVE_COMMIT)은 사회자다. 원칙 3.
+ */
+export const LiveAutoTransition = z.enum(['COUNTDOWN_ZERO', 'MATCH_END']);
+export type LiveAutoTransition = z.infer<typeof LiveAutoTransition>;
 
 /**
  * 한 매치에서 탭할 수 있는 한쪽 편.
@@ -51,11 +65,14 @@ export const LEGAL_LIVE_TRANSITIONS: Readonly<Record<LivePhase, readonly LivePha
  * 대표 3명은 37명이 소리를 지른다. 정규화가 더 공정하지만 더 조용하고,
  * CLAUDE.md의 기준은 공정성이 아니라 오디오다.
  * 부수 효과로 인바운드가 600 msg/s → ~90 msg/s로 떨어지고 배터리 위험도 줄어든다.
+ *
+ * ★label·tone이 있었는데 뺐다★ (단계 3 — 첫 소비자가 낸 구멍)
+ * 조 이름과 형광색은 점수판이 이미 전 클라이언트에 상시로 준다(session.ts Scoreboard).
+ * 여기 또 실으면 콘솔이 라벨을 지어내는 두 번째 진실이 생기고, 둘은 반드시 어긋난다.
+ * 빔은 teamId로 점수판에서 이름·색을 찾는다 — 파생이지 중복 전송이 아니다.
  */
 export const LiveSide = z.object({
   teamId: TeamId,
-  label: z.string(),
-  tone: Tone,
   /** 이 매치에서 탭이 유효한 사람들. 여기 없는 사람의 탭은 서버가 조용히 버린다. */
   eligible: z.array(ParticipantId).min(1).readonly(),
 });
@@ -69,23 +86,30 @@ export type LiveSide = z.infer<typeof LiveSide>;
  * 그건 사회자의 일이다(원칙 3). 사회자가 콘솔에서 두 조를 골라서 arm한다.
  * 부전승도, 재경기도, "야 너네 둘이 붙어봐"도 전부 그냥 매치 하나다.
  * 브래킷 로직 0줄로 토너먼트가 되고, 현장에서 계획이 틀어져도 앱이 안 막는다.
+ *
+ * ★matchId·roundId가 있었는데 뺐다★ (단계 3 — 첫 소비자가 낸 구멍)
+ * LIVE_COMMIT 멱등의 키가 matchId인데 그걸 콘솔이 채번하면, 콘솔 새로고침 후
+ * "m1"을 다시 쓰는 순간 이미 커밋된 매치와 충돌해 새 매치 점수가 조용히 증발한다.
+ * 식별자는 서버가 ARM 때 채번하고 콘솔은 스냅샷에서 읽는다 — 라운드와 같은 규칙이다.
  */
 export const LiveArmSpec = z.object({
-  matchId: MatchId,
-  roundId: RoundId,
   a: LiveSide,
   b: LiveSide,
-  /** 이 매치에 걸린 점수. 결승만 크게 하고 싶으면 여기서 올린다. */
+  /** 이 매치에 걸린 점수. 결승만 크게 하고 싶으면 여기서 올린다. ×2 토글은 Live에 없다. */
   basePoints: z.number().int().positive(),
 });
 export type LiveArmSpec = z.infer<typeof LiveArmSpec>;
 
-/** ARM 될 때 한 번 내려가는 고정 정보. 20Hz 프레임을 작게 유지하는 대가로 이게 따로 나간다. */
+/**
+ * 확정된 매치의 고정 정보. ARM 때 만들어져 스냅샷(DisplayState LIVE / HostSnapshot.live)에
+ * 실린다 — 20Hz 프레임엔 절대 안 실린다. 프레임은 pos 하나만 나른다.
+ */
 export const MatchCard = z.object({
   matchId: MatchId,
   a: LiveSide,
   b: LiveSide,
   basePoints: z.number().int().positive(),
+  /** ACTIVE의 길이. 빔 타이머가 phaseEndsAt과 함께 이걸로 파생된다. 게임 상수의 동결값. */
   durationMs: z.number().int().positive(),
 });
 export type MatchCard = z.infer<typeof MatchCard>;
@@ -93,15 +117,20 @@ export type MatchCard = z.infer<typeof MatchCard>;
 /**
  * 탭 줄다리기의 프레임 페이로드.
  *
- * ★필드가 2개뿐인 게 설계다★
+ * ★필드가 1개뿐인 게 설계다★
  * pos 하나가 바 위치 + 오디오 긴장도 + (원하면) 조명을 전부 굴린다.
  * 바가 KO 선에 가까워질수록 BGM이 조여드는 걸 이벤트 없이 파생할 수 있다 —
  * "지는 쪽이 비명"의 오디오 버전이고, 말 없이 방에 누가 죽어간다는 걸 알린다.
+ *
+ * ★remainMs가 있었는데 뺐다★ (단계 3 — 첫 소비자가 낸 구멍)
+ * ids.ts: "남은 시간(duration)은 절대 보내지 않는다." 프레임은 volatile이라 밀리면
+ * 버려지는데, 타이머가 마지막 프레임의 remainMs에 매달리면 프레임이 0.5초 끊길 때
+ * 시계가 얼어붙는다. 타이머는 스냅샷의 phaseEndsAt에서 빔이 로컬로 파생한다 —
+ * 프레임이 다 죽어도 시계는 간다.
  */
 export const TapTugPayload = z.object({
   /** -1000 = a 완승, +1000 = b 완승, 0 = 팽팽. 정수인 건 프레임을 작게 하려고. */
   pos: z.number().int().min(-1000).max(1000),
-  remainMs: z.number().int().nonnegative(),
 });
 export type TapTugPayload = z.infer<typeof TapTugPayload>;
 
@@ -126,18 +155,10 @@ export const MatchOutcome = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('KO'), winner: TeamId }),
   /** 시간 종료. 접전이었다는 뜻이라 다른 소리(부저)를 낸다. 다른 소리 = 다른 이야기. */
   z.object({ kind: z.literal('TIMEUP'), winner: TeamId.nullable() }),
+  /** 사회자의 ACTIVE 중 ABORT. 커밋 대상이 아니다 — 재경기는 그냥 새로 arm한다. */
   z.object({ kind: z.literal('VOID'), reason: z.string() }),
 ]);
 export type MatchOutcome = z.infer<typeof MatchOutcome>;
-
-export const MatchResult = z.object({
-  matchId: MatchId,
-  outcome: MatchOutcome,
-  finalPos: z.number().int(),
-  /** 배수 적용 전. 커밋 때 코어가 곱한다. */
-  baseDeltas: z.record(TeamId, z.number().int()),
-});
-export type MatchResult = z.infer<typeof MatchResult>;
 
 /**
  * 바 물리 — 튜닝 값이 아니라 모양만 계약에 남긴다.

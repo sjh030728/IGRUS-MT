@@ -5,6 +5,7 @@ import type {
   DisplayState,
   EpochMs,
   HostSnapshot,
+  MatchCard,
   Me,
   ParticipantId,
   PlaySnapshot,
@@ -15,7 +16,7 @@ import type {
 } from '@mt/protocol';
 import { LEGAL_TRANSITIONS } from '@mt/protocol';
 import { foldFinal } from './submissions.js';
-import type { ActiveRound, SessionState } from './state.js';
+import type { ActiveMatch, ActiveRound, SessionState } from './state.js';
 
 /**
  * ═══ 스냅샷 투영기 ═══
@@ -42,9 +43,26 @@ export function projectDisplay(s: SessionState, board: Scoreboard): DisplayState
   if (s.blackout) return { mode: 'BLACK' };
 
   // 파생 규칙: 세그먼트 kind가 모드다. AWARD → 시상, GAME에서 라운드가 돌면 ROUND,
-  // 그 외 전부(SCOREBOARD 세그먼트, GAME의 라운드 소진 표지, 부팅 찰나)는 점수판 표지.
+  // 매치가 있으면 LIVE, 그 외 전부(SCOREBOARD 세그먼트, 라운드 소진 표지, Live의
+  // 매치 사이, 부팅 찰나)는 점수판 표지.
   const seg = s.segment;
   if (seg?.def.kind === 'AWARD') return { mode: 'AWARD', scoreboard: board };
+
+  // ★매치가 스냅샷에 통째로 실린다★ ACTIVE 한복판에 빔이 새로고침돼도 이 한 발로 복구된다.
+  // 20Hz 프레임은 이 위의 pos만 덮는다 (display.ts LIVE 멤버).
+  const m = s.match;
+  if (m) {
+    return {
+      mode: 'LIVE',
+      scoreboard: board,
+      card: cardOf(m),
+      phase: m.phase,
+      phaseStartedAt: m.phaseStartedAt,
+      phaseEndsAt: m.phaseEndsAt,
+      pos: m.pos,
+      outcome: m.phase === 'ENDED' ? m.outcome : null,
+    };
+  }
 
   if (!s.round) {
     return { mode: 'SCOREBOARD_FULL', title: seg?.def.title ?? '준비 중', scoreboard: board };
@@ -126,6 +144,11 @@ function clamp(chunks: DisplayChunk[]): ContentChunks {
   return chunks.slice(0, 3);
 }
 
+/** 매치의 고정 정보. ARM 이후 절대 안 변한다 — 변하는 건 pos·phase뿐. */
+function cardOf(m: ActiveMatch): MatchCard {
+  return { matchId: m.matchId, a: m.spec.a, b: m.spec.b, basePoints: m.spec.basePoints, durationMs: m.durationMs };
+}
+
 /** 분자도 scope를 따른다. 조가 답하는 라운드에서 3명이 눌렀어도 그건 1조다. */
 function submitterCount(r: ActiveRound): number {
   return new Set(r.log.map((x) => (r.scope === 'TEAM' ? x.teamId : x.participantId))).size;
@@ -182,6 +205,17 @@ export function projectHost(
       current: s.segment?.def.segmentId === d.segmentId,
     })),
     segmentRounds: (s.segment?.rounds ?? []).map((spec) => ({ roundId: spec.roundId, index: spec.index })),
+    // 라운드의 brief/basePoints와 같은 대칭 — 블랙아웃 중에도 콘솔은 매치를 봐야 한다 (events.ts).
+    live: s.match
+      ? {
+          phase: s.match.phase,
+          phaseStartedAt: s.match.phaseStartedAt,
+          phaseEndsAt: s.match.phaseEndsAt,
+          card: cardOf(s.match),
+          outcome: s.match.phase === 'ENDED' ? s.match.outcome : null,
+          committed: s.match.committed,
+        }
+      : null,
     health,
   };
 }
@@ -196,12 +230,23 @@ export function legalCommands(s: SessionState): string[] {
   if (s.entryOpen) out.push('CLOSE_ENTRY');
 
   const r = s.round;
+  const m = s.match;
+  const matchIdle = !m || (m.phase === 'ENDED' && (m.committed || m.outcome?.kind === 'VOID'));
 
-  // ★이동은 라운드가 안 도는 동안만★ (round.service canNavigate와 같은 규칙 —
+  // ★이동은 라운드/매치가 안 도는 동안만★ (round.service canNavigate와 같은 규칙 —
   // 여기는 버튼 표시용 파생일 뿐, 진짜 거절은 서버 메서드가 한다)
-  if (!r || ['IDLE', 'REACTION', 'ABORTED'].includes(r.phase)) {
+  if ((!r || ['IDLE', 'REACTION', 'ABORTED'].includes(r.phase)) && matchIdle) {
     out.push('SEGMENT_GOTO');
-    if (s.segment?.game) out.push('ROUND_GOTO');
+    if (s.segment?.game?.kind === 'LOCK_REVEAL') out.push('ROUND_GOTO');
+  }
+
+  // ── Live — 전이표(LEGAL_LIVE_TRANSITIONS)의 사회자 몫 + arm/커밋 규칙의 파생 ──
+  if (s.segment?.game?.kind === 'LIVE') {
+    if (matchIdle) out.push('LIVE_ARM');
+    if (m?.phase === 'ARMED') out.push('LIVE_START');
+    // ABORT: 도는 매치 어디서든 + 미커밋 ENDED(폐기). 커밋된 매치는 무를 게 없다 — VOID(원장)가 길이다.
+    if (m && (m.phase !== 'ENDED' || !m.committed)) out.push('LIVE_ABORT');
+    if (m?.phase === 'ENDED' && !m.committed && m.outcome && m.outcome.kind !== 'VOID') out.push('LIVE_COMMIT');
   }
 
   if (!r) return out;
@@ -234,6 +279,15 @@ export function legalCommands(s: SessionState): string[] {
  * 리빌 순간 폰을 죽인다. 폰이 정답을 띄우면 40명이 고개를 박고 빔이 장식이 된다.
  */
 export function projectPlay(s: SessionState, me: Me, pid: ParticipantId): PlaySnapshot {
+  // ── 매치가 돌면 라운드보다 먼저다 (둘이 공존할 수 없지만, 분기 순서는 명시해 둔다) ──
+  const m = s.match;
+  if (m) {
+    if (m.phase === 'ENDED') return { view: 'WAIT', me, message: '결과는 화면에!' };
+    // ★대표 3명만 eligible★ 나머지 37명은 응원 화면 — 그 37명이 오디오다 (live.ts).
+    const eligible = m.spec.a.eligible.includes(pid) || m.spec.b.eligible.includes(pid);
+    return { view: 'TAP', me, matchId: m.matchId, eligible, phase: m.phase, phaseEndsAt: m.phaseEndsAt };
+  }
+
   const r = s.round;
 
   if (!r) {

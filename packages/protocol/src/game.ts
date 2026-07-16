@@ -238,6 +238,11 @@ export interface LiveGame<TPayload = TapTugPayload> {
   readonly title: string;
   /** 서버 엔진이 이 상한으로 자른다. 게임은 인정된 수만 본다. */
   readonly rate: { perSec: number; burst: number };
+  /**
+   * ACTIVE의 길이. K(민감도)와 함께 리허설에서 확정하는 게임 상수 — 와이어 config가 아니다.
+   * 엔진이 ARM 때 MatchCard.durationMs로 동결해서 빔 타이머의 근거가 된다.
+   */
+  readonly durationMs: number;
 
   /** ARM 될 때. 누산기 초기화. */
   arm(spec: LiveArmSpec): void;

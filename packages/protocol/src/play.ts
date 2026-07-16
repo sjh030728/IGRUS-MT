@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Tone } from './display.js';
+import { Tone } from './tone.js';
 
 /**
  * ═══ 폰 입력 어휘 ═══ DisplayChunk의 폰 판이다.

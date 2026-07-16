@@ -1,8 +1,13 @@
 import type {
+  AnomalyFlag,
   AnswerScope,
   EpochMs,
+  Game,
   GameId,
-  LockRevealGame,
+  LiveArmSpec,
+  LivePhase,
+  MatchId,
+  MatchOutcome,
   RoundPhase,
   RoundSpec,
   RosterEntry,
@@ -42,8 +47,9 @@ export interface SegmentDef {
  */
 export interface SegmentState {
   def: SegmentDef;
-  /** kind가 GAME이면 그 게임 모듈. 코어가 parseAnswer/score를 여기서 찾는다. */
-  game: LockRevealGame<unknown> | null;
+  /** kind가 GAME이면 그 게임 모듈. 코어가 parseAnswer/score(LockReveal) 또는 엔진 훅(Live)을 여기서 찾는다. */
+  game: Game | null;
+  /** LockReveal만 채운다. Live 세그먼트는 라운드가 없다 — 매치는 사회자가 그때그때 arm한다. */
   rounds: readonly RoundSpec[];
   cursor: number;
 }
@@ -75,6 +81,54 @@ export interface ActiveRound {
   scored: ScoreResult | null;
 }
 
+/**
+ * 참가자 한 명의 매치 중 탭 장부. ★전부 엔진(live.service)만 쓴다★
+ * 게임 모듈은 이 존재를 모른다 — "안티치트는 엔진 레벨" (anticheat.ts).
+ */
+export interface TapAccount {
+  /** 토큰 버킷. burst가 용량, perSec가 충전 속도. 넘친 탭은 조용히 버린다. */
+  tokens: number;
+  lastRefillAt: EpochMs;
+  credited: number;
+  dropped: number;
+  /** 최근 배치 도착 시각 — 로봇 탐지(간격 편차)의 재료. 상한 있게 유지한다. */
+  batchAt: EpochMs[];
+  /** 1초 창에서 관측된 최대 인정 속도. */
+  peakPerSec: number;
+  /** 이번 매치에서 탭을 보낸 소켓들. 2개 이상이면 DUPLICATE_SOCKET. */
+  sockets: Set<string>;
+  flags: Set<AnomalyFlag>;
+  /** 첫 flag가 붙은 시각. SuspectRow.since. */
+  flaggedAt: EpochMs | null;
+}
+
+/**
+ * 진행 중인 매치 하나. 항상 0개 또는 1개다 — LivePhase의 IDLE은 match=null로 표현된다.
+ * ActiveRound와 한 쌍: 라운드는 LockReveal 세그먼트에만, 매치는 Live 세그먼트에만 산다.
+ */
+export interface ActiveMatch {
+  /** ★서버가 채번한다★ 콘솔이 발명하면 멱등 커밋이 충돌한다 (live.ts LiveArmSpec 주석). */
+  matchId: MatchId;
+  /** ARM 명령이 준 그대로. 적재 후 불변 — 대진을 바꾸려면 ABORT 후 새로 arm한다. */
+  spec: LiveArmSpec;
+  /** 게임 상수(LiveGame.durationMs)의 동결값. MatchCard로 빔 타이머의 근거가 된다. */
+  durationMs: number;
+  phase: LivePhase;
+  phaseStartedAt: EpochMs;
+  /** ★COUNTDOWN(GO 착지)·ACTIVE(시간 종료)만 non-null★ — 라운드와 같은 규칙. */
+  phaseEndsAt: EpochMs | null;
+  /** 마지막 tick의 바 위치. 스냅샷 재접속 첫 페인트 + ENDED의 최종 위치. */
+  pos: number;
+  /** 프레임 단조 증가(LiveFrame.seq). 빔이 순서 뒤바뀐 프레임을 버리는 근거. */
+  seq: number;
+  /** ENDED에서만 non-null. */
+  outcome: MatchOutcome | null;
+  /** LIVE_COMMIT 멱등 — 두 번 눌러도 원장에 두 번 안 쌓인다. */
+  committed: boolean;
+  /** 참가자별 탭 장부. 매치와 함께 나고 죽는다. */
+  accounts: Map<ParticipantId, TapAccount>;
+}
+
 export interface SessionState {
   sessionId: SessionId;
   teams: TeamInfo[];
@@ -85,6 +139,8 @@ export interface SessionState {
   /** null은 부팅 직후 찰나뿐 — bootstrap이 첫 세그먼트에 들어가면서 채운다. */
   segment: SegmentState | null;
   round: ActiveRound | null;
+  /** Live 세그먼트의 진행 중 매치. 세그먼트를 떠나면 반드시 null로. */
+  match: ActiveMatch | null;
   /**
    * ★모드가 아니라 오버라이드다★ decisions/0002 참고.
    * 빔 모드는 세그먼트에서 파생되고, 이 플래그는 그 위에 덮인다.

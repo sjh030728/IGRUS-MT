@@ -2,15 +2,10 @@ import { z } from 'zod';
 import { EpochMs, RoundId, SegmentId, TeamId } from './ids.js';
 import { RoundPhase } from './phase.js';
 import { Scoreboard } from './session.js';
+import { Tone } from './tone.js';
+import { LivePhase, MatchCard, MatchOutcome } from './live.js';
 
-/** 형광 팔레트. CLAUDE.md 타협 금지: "배경 #000 + 형광 텍스트. 회색 계열 UI 금지." */
-export const Tone = z.enum([
-  'NEUTRAL', // 형광 시안
-  'GOOD', // 형광 그린 — 정답 / 점수 상승
-  'BAD', // 형광 핑크 — 오답 / 점수 하락 / 배신
-  'HOT', // 형광 옐로 — 강조 / ×2 배지
-]);
-export type Tone = z.infer<typeof Tone>;
+// Tone은 tone.ts로 갔다 — LIVE 모드가 live.ts를 끌어오면서 순환이 생겨서다 (tone.ts 머리말).
 
 /**
  * 빔에 그릴 정보 덩어리 하나.
@@ -43,13 +38,9 @@ export const DisplayChunk = z.discriminatedUnion('t', [
   }),
   /** 카운트다운 3-2-1. 화면을 가득 채운다. */
   z.object({ t: z.literal('bignum'), n: z.number().int() }),
-  /** 탭 줄다리기 바. -1000(왼쪽 승) ~ +1000(오른쪽 승). */
-  z.object({
-    t: z.literal('tugbar'),
-    pos: z.number().int().min(-1000).max(1000),
-    left: z.object({ label: z.string(), tone: Tone }),
-    right: z.object({ label: z.string(), tone: Tone }),
-  }),
+  // ★tugbar 청크가 있었는데 뺐다★ (단계 3) — 줄다리기는 라운드가 아니라 LIVE 모드
+  // 전용 멤버로 그려진다(아래 DisplayState). 여기 남겨두면 라운드 콘텐츠로 바를 그리는
+  // 두 번째 경로가 생기고, 빔에 뭐가 떠 있나의 진실이 두 줄기가 된다 (decisions/0002).
 ]);
 export type DisplayChunk = z.infer<typeof DisplayChunk>;
 
@@ -69,7 +60,7 @@ export type DisplayChunk = z.infer<typeof DisplayChunk>;
  *   COLLECT  = 점수판 + 질문 + 보기 + 미터        = 4 (정확히 예산)
  *   REVEAL   = 점수판 + 정답 + 조별 답 격자        = 3
  *   COUNTDOWN= 점수판 + 질문(흐리게) + 거대 숫자   = 3
- *   탭 ACTIVE= 점수판 + 대진 캡션 + 바             = 3
+ *   탭 ACTIVE= 점수판 + 대진 캡션 + 바             = 3 (LIVE 모드 — 멤버 모양 자체가 예산이다)
  * 여유가 거의 없다. 단계 5 리허설에서 뒷줄 가독성을 반드시 실측할 것.
  */
 export const MAX_CONTENT_CHUNKS = 3;
@@ -130,6 +121,28 @@ export const DisplayState = z.discriminatedUnion('mode', [
     mode: z.literal('ROUND'),
     scoreboard: Scoreboard,
     round: DisplayRoundView,
+  }),
+  /**
+   * 탭 줄다리기 매치. ★이 멤버가 없던 게 단계 3 최대 계약 구멍이었다★
+   * 매치 상태가 live:armed 이벤트로만 가면, ACTIVE 한복판에 빔이 새로고침될 때
+   * 스냅샷엔 매치가 없어서 빔이 점수판 표지로 돌아간다 — 밤의 피크에 빔이 장님이 된다.
+   * "재접속은 스냅샷 1발"(events.ts)이 여기도 성립해야 한다. 이름·색은 여기 없다 —
+   * teamId로 옆의 scoreboard에서 파생한다 (live.ts LiveSide 주석).
+   *
+   * 20Hz 프레임(live:frame)은 이 멤버의 pos만 덮어쓴다. 나머지는 전이 때만 변한다.
+   */
+  z.object({
+    mode: z.literal('LIVE'),
+    scoreboard: Scoreboard,
+    card: MatchCard,
+    phase: LivePhase,
+    phaseStartedAt: EpochMs,
+    /** ★COUNTDOWN(GO 착지)·ACTIVE(시간 종료)에서만 non-null★ — 라운드와 같은 규칙. */
+    phaseEndsAt: EpochMs.nullable(),
+    /** 마지막 확정 바 위치. 재접속 첫 페인트용 — 이후는 live:frame이 덮는다. */
+    pos: z.number().int().min(-1000).max(1000),
+    /** ENDED에서만 non-null. 그 전엔 절대 안 내려간다 — deltas와 같은 규칙. */
+    outcome: MatchOutcome.nullable(),
   }),
 ]);
 export type DisplayState = z.infer<typeof DisplayState>;

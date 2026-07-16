@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
-import type { DisplaySnapshot } from '@mt/protocol';
+import type { DisplaySnapshot, LiveFrame } from '@mt/protocol';
 import { connect } from '../socket.js';
 import { sound } from '../sound/engine.js';
 import { driveSound } from '../sound/derive.js';
 import { Chunk, CountdownCtx } from '../display/Chunk.js';
+import { LiveView } from '../display/Live.js';
 import { Scoreboard } from '../display/Scoreboard.js';
 import { TONE, glow } from '../theme.js';
 
@@ -16,8 +17,11 @@ import { TONE, glow } from '../theme.js';
  */
 export function Display() {
   const [snap, setSnap] = useState<DisplaySnapshot | null>(null);
+  const [frame, setFrame] = useState<LiveFrame | null>(null);
   const [audioReady, setAudioReady] = useState(false);
   const sockRef = useRef<Socket | null>(null);
+  // 리스너는 한 번만 달리므로 최신값 비교는 state가 아니라 ref로 한다 (stale closure).
+  const frameKey = useRef({ matchId: '', seq: -1 });
 
   useEffect(() => {
     const socket = connect({ role: 'display' });
@@ -27,6 +31,14 @@ export function Display() {
       socket.emit('display:status', { audioUnlocked: sound.unlocked });
     });
     socket.on('state:display', (s: DisplaySnapshot) => setSnap(s));
+    // ★스냅샷을 우회하는 유일한 빔 채널★ (events.ts live:frame) — 매치의 바 위치만 나른다.
+    socket.on('live:frame', (f: LiveFrame) => {
+      const k = frameKey.current;
+      // 순서 뒤바뀐 프레임은 버린다 — seq가 그 근거다 (live.ts). 새 매치는 seq가 다시 0부터.
+      if (f.matchId === k.matchId && f.seq <= k.seq) return;
+      frameKey.current = { matchId: f.matchId, seq: f.seq };
+      setFrame(f);
+    });
     return () => { socket.close(); sockRef.current = null; };
   }, []);
 
@@ -76,6 +88,9 @@ export function Display() {
 
   // 패닉 킬. 카톡 알림이 빔에 떴을 때. 진짜로 아무것도 안 그린다.
   if (s.mode === 'BLACK') return <div style={{ height: '100%', background: '#000' }} />;
+
+  // 탭 줄다리기. 매치 골격은 스냅샷에서, 바 위치는 20Hz 프레임에서.
+  if (s.mode === 'LIVE') return <LiveView s={s} frame={frame} />;
 
   if (s.mode === 'SCOREBOARD_FULL' || s.mode === 'AWARD') {
     return (

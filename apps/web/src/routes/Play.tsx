@@ -143,9 +143,100 @@ export function Play() {
       );
     }
 
-    case 'TAP':
-      return <Wrap><Small>탭 줄다리기는 단계 3</Small></Wrap>;
+    case 'TAP': {
+      // ★대표가 아닌 37명에겐 응원 화면이 뷰의 전부다★ 그 37명이 오디오다 (live.ts).
+      if (!snap.eligible) {
+        return (
+          <Wrap>
+            <div style={{ fontSize: 64 }}>📣</div>
+            <Big color={teamColor}>{snap.me.teamName}</Big>
+            <Small>대표 경기! 폰 말고 목청으로 응원하세요</Small>
+          </Wrap>
+        );
+      }
+      return (
+        <TapPad
+          key={snap.matchId} // 매치가 바뀌면 카운터·버퍼가 리셋되도록 통째로 다시 만든다
+          matchId={snap.matchId}
+          phase={snap.phase}
+          endsAt={snap.phaseEndsAt}
+          color={teamColor}
+          tap={(n) => sockRef.current?.emit('play:tap', { matchId: snap.matchId, n, windowMs: 100 })}
+        />
+      );
+    }
   }
+}
+
+/**
+ * ═══ 탭 패드 ═══
+ *
+ * ★탭 1회당 1발이 아니라 100ms 모아서 보낸다★ (events.ts PlayTap)
+ * "폰이 개수만 세서 10Hz로 올린다. 배터리(위험 3위)와 대역폭 둘 다에 필요하다."
+ * 서버는 이 수를 그대로 믿지 않는다 — 레이트 상한이 서버에 있다.
+ */
+function TapPad({ matchId, phase, endsAt, color, tap }: {
+  matchId: string;
+  phase: string;
+  endsAt: number | null;
+  color: string;
+  tap: (n: number) => void;
+}) {
+  const buf = useRef(0);
+  const [count, setCount] = useState(0);
+  const active = phase === 'ACTIVE';
+
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => {
+      if (buf.current > 0) {
+        tap(buf.current);
+        buf.current = 0;
+      }
+    }, 100);
+    return () => clearInterval(t);
+    // matchId가 바뀌면 key로 컴포넌트가 통째로 재생성된다 — 여기선 active만 본다.
+  }, [active, matchId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (phase === 'ARMED') {
+    return (
+      <Wrap>
+        <Big color={color}>준비!</Big>
+        <Small>곧 시작합니다 — 엄지 풀어두세요</Small>
+      </Wrap>
+    );
+  }
+
+  if (phase === 'COUNTDOWN') {
+    return (
+      <Wrap>
+        {endsAt !== null && <Countdown endsAt={endsAt} />}
+        <Big color={color}>곧 GO!</Big>
+      </Wrap>
+    );
+  }
+
+  // ACTIVE — 화면 전체가 버튼이다. 마감 10초에 작은 버튼을 조준하게 하면 안 된다.
+  return (
+    <button
+      onPointerDown={(e) => {
+        e.preventDefault(); // 더블탭 줌·롱프레스 선택 방지
+        buf.current++;
+        setCount((c) => c + 1);
+      }}
+      style={{
+        width: '100%', minHeight: '100dvh', background: '#000', border: 'none', cursor: 'pointer',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
+        WebkitUserSelect: 'none', userSelect: 'none', touchAction: 'manipulation',
+      }}
+    >
+      <div style={{ fontSize: 96, fontWeight: 900, color, textShadow: glow(color, 2), fontVariantNumeric: 'tabular-nums' }}>
+        {count}
+      </div>
+      <div style={{ fontSize: 34, fontWeight: 900, color, textShadow: glow(color) }}>연타!!</div>
+      <Small>화면 아무 데나 두드리세요</Small>
+    </button>
+  );
 }
 
 function Countdown({ endsAt }: { endsAt: number }) {

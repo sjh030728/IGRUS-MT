@@ -9,6 +9,7 @@
  */
 
 export * from './ids.js';
+export * from './tone.js';
 export * from './session.js';
 export * from './phase.js';
 export * from './display.js';

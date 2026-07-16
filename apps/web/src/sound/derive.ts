@@ -25,10 +25,40 @@ let prevPhase: string | null = null;
  *   남은 것만 잡힌다 — 스스로 교정된다. 여기에 억제를 걸면 반대로 재접속 후 무음이 된다.
  */
 export function driveSound(state: DisplayState): void {
-  const phase = state.mode === 'ROUND' ? state.round.phase : state.mode;
+  // ★두 상태머신의 phase 이름이 겹친다 (둘 다 COUNTDOWN이 있다)★ 접두어로 구분해야
+  // 라운드 COUNTDOWN → 매치 COUNTDOWN 전환이 "안 바뀜"으로 오판되지 않는다.
+  const phase =
+    state.mode === 'ROUND' ? `R:${state.round.phase}`
+    : state.mode === 'LIVE' ? `L:${state.phase}`
+    : state.mode;
 
   const changed = phase !== prevPhase;
   if (changed) sound.resetSchedule();
+
+  // ── 탭 줄다리기 — 라운드와 같은 원리: 전부 phase + phaseEndsAt에서 파생 ──
+  if (state.mode === 'LIVE') {
+    const fresh = serverNow() - state.phaseStartedAt < 1500;
+    const key = `${state.card.matchId}:${state.phase}:${state.phaseEndsAt}`;
+    switch (state.phase) {
+      case 'COUNTDOWN':
+        // 틱 + endsAt에 얹히는 화음 = "GO!". 리빌 스팅과 같은 착지 메커니즘이다.
+        sound.bedOff();
+        if (state.phaseEndsAt) sound.countdown(key, state.phaseEndsAt);
+        break;
+      case 'ACTIVE':
+        // 시간 종료를 향해 조여드는 맥박. KO로 조기 종료되면 ENDED가 bedOff로 끊는다.
+        if (state.phaseEndsAt) sound.bedOn(key, state.phaseEndsAt);
+        break;
+      case 'ENDED':
+        sound.bedOff();
+        if (changed && fresh) sound.scoreSting(); // KO/타임업 스팅. 재접속 억제 규칙 동일.
+        break;
+      default: // ARMED — 사회자 멘트 구간. 앱은 조용히 한다 (ARM_BED는 단계 4 사운드보드에서).
+        sound.bedOff();
+    }
+    prevPhase = phase;
+    return;
+  }
 
   // BLACK은 패닉 킬이다. 카톡 알림이 빔에 떴는데 BGM이 계속 흐르면 안 된다.
   if (state.mode !== 'ROUND') {
