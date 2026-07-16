@@ -204,6 +204,7 @@ export function projectHost(
       gameId: d.gameId,
       current: s.segment?.def.segmentId === d.segmentId,
     })),
+    games: s.gamesCatalog,
     segmentRounds: (s.segment?.rounds ?? []).map((spec) => ({ roundId: spec.roundId, index: spec.index })),
     // 라운드의 brief/basePoints와 같은 대칭 — 블랙아웃 중에도 콘솔은 매치를 봐야 한다 (events.ts).
     live: s.match
@@ -226,7 +227,12 @@ export function projectHost(
  * 두 벌이 되는 순간 어긋나고, 어긋난 걸 아는 시점은 8시 35분이다.
  */
 export function legalCommands(s: SessionState): string[] {
-  const out: string[] = ['DISPLAY_BLACKOUT'];
+  // 항상 합법인 것들: 원장 기입(점수 도구)·연출·사람 관리·예비 투입은 phase가 없다 —
+  // "현장은 계획대로 안 간다"의 도구들이라 언제든 눌려야 한다 (CLAUDE.md 콘솔 필수기능).
+  const out: string[] = [
+    'DISPLAY_BLACKOUT', 'SEED_SET', 'ADJUST', 'VOID', 'SFX',
+    'MUTE_PARTICIPANT', 'ASSIGN_PARTICIPANT', 'REISSUE_TOKEN', 'SEGMENT_INJECT',
+  ];
   if (s.entryOpen) out.push('CLOSE_ENTRY');
 
   const r = s.round;

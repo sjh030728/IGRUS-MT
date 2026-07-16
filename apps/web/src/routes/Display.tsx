@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
-import type { DisplaySnapshot, LiveFrame } from '@mt/protocol';
+import type { DisplaySnapshot, LiveFrame, SfxCue } from '@mt/protocol';
 import { connect } from '../socket.js';
 import { sound } from '../sound/engine.js';
 import { driveSound } from '../sound/derive.js';
@@ -39,6 +39,8 @@ export function Display() {
       frameKey.current = { matchId: f.matchId, seq: f.seq };
       setFrame(f);
     });
+    // 사운드보드 (단계 4). 일회성 푸시 — 스냅샷 밖이라 재접속 때 다시 안 터진다. 그게 맞다.
+    socket.on('sound:sfx', (p: { cue: SfxCue }) => sound.sfx(p.cue));
     return () => { socket.close(); sockRef.current = null; };
   }, []);
 

@@ -23,14 +23,20 @@ import { DbService } from '../core/db.service.js';
 import { LedgerService } from '../core/ledger.service.js';
 import { LiveService } from '../core/live.service.js';
 import { RoundService } from '../core/round.service.js';
+import { loadSessionConfig } from '../core/config.js';
 import { projectDisplay, projectHost, projectPlay } from '../core/projector.js';
 
 type Role = 'host' | 'play' | 'display';
 
-/** 단계 1은 콘솔 토큰을 부팅 때 찍는다. 단계 4에서 QR/설정으로 옮긴다. */
-const HOST_TOKEN = process.env['HOST_TOKEN'] ?? 'mt-host';
+/** env가 이기고, 그다음 config(7:30에 고치는 파일), 마지막이 개발 기본값. */
+const HOST_TOKEN = process.env['HOST_TOKEN'] ?? loadSessionConfig().hostToken ?? 'mt-host';
 
 const now = (): EpochMs => Date.now();
+
+/** 입장 코드 문자셋 — 0/O/1/I 없음. 소리로 불러줄 값이라 헷갈리는 글자를 뺀다. */
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const mintCode = (): string =>
+  Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
 
 /**
  * ═══ WS 표면 ═══
@@ -45,6 +51,8 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   @WebSocketServer() server!: Server;
 
   private readonly tokens = new Map<ResumeToken, ParticipantId>();
+  /** 입장 코드 → pid. REISSUE_TOKEN이 채우고 claim이 소비한다. 1회용. */
+  private readonly claims = new Map<string, ParticipantId>();
   private displayAudioUnlocked = false;
 
   constructor(
@@ -116,9 +124,34 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     const p = PlayHello.safeParse(payload);
     if (!p.success) return { ok: false as const, code: 'INVALID', message: '잘못된 요청' };
 
+    let pid: ParticipantId | undefined;
+    let token: ResumeToken | undefined;
+
+    // ★입장 코드가 최우선★ — 빌린 폰의 localStorage엔 주인의 토큰이 있어서(events.ts PlayHello)
+    // resumeToken보다 먼저 봐야 한다. 코드는 1회용, 옛 토큰은 전부 무효화(분실 폰 = 분실 열쇠).
+    const claim = p.data.claim?.toUpperCase();
+    if (claim && this.claims.has(claim)) {
+      pid = this.claims.get(claim)!;
+      this.claims.delete(claim);
+      for (const [t, owner] of this.tokens) if (owner === pid) this.tokens.delete(t);
+      token = ResumeToken.parse(randomBytes(16).toString('hex'));
+      this.tokens.set(token, pid);
+      // 같은 신원의 산 소켓이 있으면 밀어낸다 — 한 사람 = 한 폰 (sys:bye 계약).
+      for (const [, s] of this.server.sockets.sockets) {
+        if (s.data.participantId === pid && s.id !== socket.id) {
+          s.emit('sys:bye', { reason: '다른 폰에서 입장 코드로 들어왔어요' });
+          s.data.participantId = undefined;
+        }
+      }
+    } else if (claim) {
+      return { ok: false as const, code: 'BAD_CODE', message: '코드가 틀렸거나 이미 쓰였어요' };
+    }
+
     // resumeToken이 있으면 신원 복구. 배터리 위험 대응의 절반이 이 한 줄이다.
-    let pid = p.data.resumeToken ? this.tokens.get(p.data.resumeToken) : undefined;
-    let token = p.data.resumeToken;
+    if (!pid) {
+      pid = p.data.resumeToken ? this.tokens.get(p.data.resumeToken) : undefined;
+      token = pid ? p.data.resumeToken : undefined;
+    }
 
     if (!pid) {
       if (!this.rounds.state.entryOpen) return { ok: false as const, code: 'ENTRY_CLOSED', message: '입장이 마감됐어요' };
@@ -128,8 +161,8 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     }
 
     const name = p.data.name ?? '익명';
-    const teamId = p.data.teamId ?? this.rounds.state.teams[0]!.teamId;
-    this.rounds.join(pid, name, teamId);
+    // ★teamId를 안 보냈으면 null — join이 기존 배정을 유지한다★ 재접속 = 조 리셋이던 버그.
+    this.rounds.join(pid, name, p.data.teamId ?? null);
     socket.data.participantId = pid;
 
     return {
@@ -225,10 +258,38 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
       case 'LIVE_ABORT': { const r = this.live.abort(cmd.matchId); return r.ok ? done : reject(r.message); }
       case 'LIVE_COMMIT': { const r = this.live.commit(cmd.matchId); return r.ok ? done : reject(r.message); }
 
-      default:
-        // 나머지 명령(되감기/보정/낮PG/예비투입/사람관리/SFX)은 단계 4다.
-        // 계약엔 있고 구현이 없다 — 조용히 성공시키면 사회자가 눌렀는데 아무 일도 안 난다.
-        return { ok: false as const, code: 'NOT_IMPLEMENTED', message: `${cmd.c}는 다음 단계` };
+      // ── 점수 도구 (단계 4) — 전부 원장 기입. 검증은 원장이 한다 (되감기 규칙 포함) ──
+      case 'SEED_SET': this.ledger.seedSet(cmd.totals, cmd.note); this.rounds.bump(); return done;
+      case 'ADJUST': this.ledger.adjust(cmd.deltas, cmd.reason); this.rounds.bump(); return done;
+      case 'VOID': {
+        const r = this.ledger.voidSeq(cmd.seq, cmd.reason);
+        if (r.ok) this.rounds.bump();
+        return r.ok ? done : reject(r.message);
+      }
+
+      // ── 연출 — 사운드보드. ★display room에만★, 스냅샷 밖(일회성 푸시 — 재생할 상태가 아니다) ──
+      case 'SFX':
+        this.server.to('display').emit('sound:sfx', { cue: cmd.cue, at: now() });
+        return done;
+
+      // ── 사람 관리 ──
+      case 'MUTE_PARTICIPANT':
+        return this.rounds.setMuted(cmd.participantId, cmd.muted) ? done : reject('로스터에 없음');
+      case 'ASSIGN_PARTICIPANT':
+        return this.rounds.assign(cmd.participantId, cmd.teamId) ? done : reject('사람 또는 조가 없음');
+      case 'REISSUE_TOKEN': {
+        const person = this.rounds.state.roster.get(cmd.participantId);
+        if (!person) return reject('로스터에 없음');
+        // 이전 코드는 무효화 — 한 사람에 산 코드는 하나만.
+        for (const [c, owner] of this.claims) if (owner === cmd.participantId) this.claims.delete(c);
+        const code = mintCode();
+        this.claims.set(code, cmd.participantId);
+        // ★코드는 ack로만 나간다★ 스냅샷에 실으면 상태가 되고, 상태가 되면 지울 때를 정해야 한다.
+        return { ok: true as const, note: `${person.name} 입장 코드: ${code} — 빌린 폰의 "코드 입장"에 입력` };
+      }
+
+      // ── 프로그램 — 예비 게임 즉시 투입 (CLAUDE.md 콘솔 필수기능 6/6 완성) ──
+      case 'SEGMENT_INJECT': { const r = this.rounds.inject(cmd.gameId, cmd.after); return r.ok ? done : reject(r.message); }
     }
   }
 

@@ -51,6 +51,12 @@ export const SessionConfig = z
     /** 빔 표지 + 세그먼트 제목. */
     title: z.string().min(1),
     /**
+     * 콘솔 인증 토큰. 없으면 개발 기본값(mt-host) — 당일엔 반드시 채울 것.
+     * env(HOST_TOKEN)가 있으면 그게 이긴다. 여기 두는 이유: 7:30에 고칠 수 있는 파일이라서.
+     * 콘솔 접속은 `/host?token=<이 값>`.
+     */
+    hostToken: z.string().min(1).optional(),
+    /**
      * ★상한 6은 임의가 아니다★ 형광 팔레트가 6색이고(session.ts), 그건
      * CLAUDE.md "배경 #000 + 형광 텍스트, 회색 계열 금지 — 뒷줄에서 읽혀야 한다"에서 나온다.
      * 7조를 만들려면 뒷줄에서 구분되는 형광색을 하나 더 찾아야 한다. 코드 문제가 아니다.

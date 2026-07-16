@@ -15,29 +15,45 @@ import { TEAM_COLOR, TONE, glow } from '../theme.js';
 export function Play() {
   const [snap, setSnap] = useState<PlaySnapshot | null>(null);
   const [ack, setAck] = useState<string | null>(null);
+  const [bye, setBye] = useState<string | null>(null);
   const sockRef = useRef<Socket | null>(null);
+
+  /**
+   * 인사 한 곳. 재접속(resumeToken) / 조 선택(teamId) / 입장 코드(claim)가 전부 이 문이다.
+   * ★teamId를 안 실으면 서버가 기존 배정을 유지한다★ — 재접속이 조를 리셋하지 않는다.
+   */
+  const hello = (extra: Record<string, unknown> = {}) => {
+    const saved = localStorage.getItem('mt:resumeToken') ?? undefined;
+    const name = localStorage.getItem('mt:name') ?? prompt('이름?') ?? '익명';
+    localStorage.setItem('mt:name', name);
+
+    sockRef.current?.emit('play:hello', { ...(saved ? { resumeToken: saved } : {}), name, ...extra }, (r: any) => {
+      if (!r.ok) return setAck(r.message);
+      localStorage.setItem('mt:resumeToken', r.resumeToken);
+      setBye(null);
+      setAck(null);
+      setSnap(r.state);
+    });
+  };
+
+  /** 폰 사망 대응 (events.ts PlayHello.claim). 콘솔이 발급한 코드로 빌린 폰이 본인이 된다. */
+  const claimCode = () => {
+    const code = prompt('입장 코드 (사회자한테 받은 4글자)');
+    if (code?.trim()) hello({ claim: code.trim().toUpperCase() });
+  };
 
   useEffect(() => {
     const socket = connect({ role: 'play' });
     sockRef.current = socket;
 
-    socket.on('connect', () => {
-      // ★재접속의 전부가 이 한 줄이다★ (ids.ts ResumeToken)
-      // "물놀이 후 8시면 20% 이하 속출. 이탈/재접속 처리가 실제로 필요하다."
-      const saved = localStorage.getItem('mt:resumeToken') ?? undefined;
-      const name = localStorage.getItem('mt:name') ?? prompt('이름?') ?? '익명';
-      localStorage.setItem('mt:name', name);
-
-      socket.emit('play:hello', { ...(saved ? { resumeToken: saved } : {}), name }, (r: any) => {
-        if (!r.ok) return setAck(r.message);
-        localStorage.setItem('mt:resumeToken', r.resumeToken);
-        setSnap(r.state);
-      });
-    });
-
+    // ★재접속의 전부가 이 한 줄이다★ (ids.ts ResumeToken)
+    // "물놀이 후 8시면 20% 이하 속출. 이탈/재접속 처리가 실제로 필요하다."
+    socket.on('connect', () => hello());
     socket.on('state:play', (s: PlaySnapshot) => setSnap(s));
+    // 같은 신원이 다른 폰에서 입장 코드로 들어옴 — 이 폰은 밀려난다. 한 사람 = 한 폰.
+    socket.on('sys:bye', (p: { reason: string }) => setBye(p.reason));
     return () => { socket.close(); };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = (roundId: string, value: unknown) => {
     sockRef.current?.emit('play:submit', { roundId, value }, (r: SubmitAck) => {
@@ -45,6 +61,17 @@ export function Play() {
       setAck(r.ok ? null : r.message);
     });
   };
+
+  // 밀려난 폰. 여기서 끝 — 이 폰의 토큰은 이미 무효라 hello를 다시 보내면 새 사람이 된다.
+  if (bye) {
+    return (
+      <Wrap>
+        <div style={{ fontSize: 56 }}>👋</div>
+        <Big color={TONE.HOT}>다른 폰에서 입장했어요</Big>
+        <Small>{bye}</Small>
+      </Wrap>
+    );
+  }
 
   if (!snap) return <Wrap><Big color={TONE.NEUTRAL}>연결 중…</Big></Wrap>;
 
@@ -56,7 +83,31 @@ export function Play() {
         <Wrap>
           <Small>{snap.me.name}</Small>
           <Big color={teamColor}>{snap.me.teamName}</Big>
+          {/* ★배정은 본인이 한다★ 임원이 정해준 조를 본인이 아니까 (CLAUDE.md "배정은 임원이 사전에").
+              40명을 콘솔에서 하나씩 옮기는 건 사회자 일이 아니다 — 콘솔 ASSIGN은 보정용. */}
+          <Small>임원이 정해준 조를 고르세요</Small>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, width: '100%', maxWidth: 340, marginTop: 6 }}>
+            {snap.teams.map((t) => {
+              const c = TEAM_COLOR[t.color];
+              const on = t.teamId === snap.me.teamId;
+              return (
+                <button
+                  key={t.teamId}
+                  onClick={() => hello({ teamId: t.teamId })}
+                  style={{
+                    padding: '16px 0', fontSize: 20, fontWeight: 800, borderRadius: 12, cursor: 'pointer',
+                    background: on ? c : '#000', color: on ? '#000' : c, border: `3px solid ${c}`,
+                    boxShadow: on ? glow(c) : 'none',
+                  }}
+                >
+                  {t.name} <span style={{ fontSize: 13, opacity: 0.75 }}>({t.memberIds.length}명)</span>
+                </button>
+              );
+            })}
+          </div>
           <Small>곧 시작합니다</Small>
+          {ack && <Small color={TONE.BAD}>{ack}</Small>}
+          <CodeEntry onClaim={claimCode} />
         </Wrap>
       );
 
@@ -65,6 +116,7 @@ export function Play() {
         <Wrap>
           <Big color={teamColor}>{snap.me.teamName}</Big>
           <Small>{snap.message}</Small>
+          <CodeEntry onClaim={claimCode} />
         </Wrap>
       );
 
@@ -250,6 +302,13 @@ function Countdown({ endsAt }: { endsAt: number }) {
     </div>
   );
 }
+
+/** 폰 사망 → 남의 폰 빌렸을 때의 입구. 눈에 안 띄게 — 99%는 평생 안 누른다. */
+const CodeEntry = ({ onClaim }: { onClaim: () => void }) => (
+  <button onClick={onClaim} style={{ marginTop: 18, background: 'none', border: 'none', color: '#555', fontSize: 13, textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}>
+    내 폰이 죽어서 빌렸어요 (코드 입장)
+  </button>
+);
 
 const Wrap = ({ children }: { children: React.ReactNode }) => (
   <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24, background: '#000', textAlign: 'center' }}>

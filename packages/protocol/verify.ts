@@ -9,6 +9,7 @@
  */
 import {
   HostCmd,
+  PlayHello,
   PlayTap,
   PlayPrompt,
   PlaySnapshot,
@@ -183,6 +184,14 @@ ok(
   !PlaySnapshot.safeParse({ view: 'TAP', me: meFixture, matchId: 'm1', eligible: true }).success &&
     PlaySnapshot.safeParse({ view: 'TAP', me: meFixture, matchId: 'm1', eligible: true, phase: 'ACTIVE', phaseEndsAt: null }).success,
 );
+
+console.log('\n[9] 콘솔 도구 — 파괴적 명령의 안전핀 (단계 4)');
+ok('VOID엔 reason이 필수 (아카이브가 이야기가 되게 — ADJUST와 같은 규칙)', !HostCmd.safeParse({ c: 'VOID', seq: 3 }).success && HostCmd.safeParse({ c: 'VOID', seq: 3, reason: '오심' }).success);
+ok('VOID seq=0 거절 (Seq는 1부터 — 0을 받으면 "아무것도 안 무효"가 조용히 성공한다)', !HostCmd.safeParse({ c: 'VOID', seq: 0, reason: 'x' }).success);
+ok('SEED_SET 정수 강제 (낮 PG에 소수점 점수는 없다)', !HostCmd.safeParse({ c: 'SEED_SET', totals: { t1: 10.5 } }).success);
+ok('MUTE는 명시적 boolean (토글이면 두 번 눌렀을 때 원위치 — 패닉 킬과 같은 이유)', !HostCmd.safeParse({ c: 'MUTE_PARTICIPANT', participantId: 'p1' }).success);
+ok('SEGMENT_INJECT after 생략 가능 (기본 = 현재 뒤에)', HostCmd.safeParse({ c: 'SEGMENT_INJECT', gameId: 'tap-tug' }).success);
+ok('입장 코드(claim) 4자 미만 거절', !PlayHello.safeParse({ claim: 'AB' }).success && PlayHello.safeParse({ claim: 'X7K2' }).success);
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===\n`);
 process.exit(fail > 0 ? 1 : 0);

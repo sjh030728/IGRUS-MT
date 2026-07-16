@@ -134,8 +134,13 @@ export interface SessionState {
   teams: TeamInfo[];
   roster: Map<ParticipantId, RosterEntry>;
   entryOpen: boolean;
-  /** 프로그램 전체. 부팅 때 config에서 굽고 그날 안 바뀐다 (예비 투입 SEGMENT_INJECT는 단계 4). */
-  program: readonly SegmentDef[];
+  /**
+   * 프로그램 전체. 부팅 때 config에서 굽는다. 그날 바뀌는 경로는 SEGMENT_INJECT(예비 투입)
+   * 딱 하나 — 추가만 있고 삭제·재배열은 없다. 스킵하고 싶은 세그먼트는 그냥 안 가면 된다.
+   */
+  program: SegmentDef[];
+  /** 등록된 게임 목록 (부팅 때 굽음). 콘솔의 예비 투입 선택지가 이걸로 그려진다. */
+  gamesCatalog: readonly { gameId: GameId; title: string }[];
   /** null은 부팅 직후 찰나뿐 — bootstrap이 첫 세그먼트에 들어가면서 채운다. */
   segment: SegmentState | null;
   round: ActiveRound | null;

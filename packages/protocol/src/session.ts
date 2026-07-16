@@ -21,6 +21,12 @@ export const RosterEntry = z.object({
   connected: z.boolean(),
   /** 마지막으로 살아있던 시각. 콘솔이 "3조 2명 끊김"을 보여주는 근거. */
   lastSeen: EpochMs,
+  /**
+   * ★조용히★ 무음 처리 (MUTE_PARTICIPANT). 제출·탭이 성공한 척하고 버려진다 —
+   * 에러를 주면 치터가 다른 폰으로 갈아탄다. 이 필드는 HostSnapshot으로만 나간다
+   * (폰 스냅샷엔 roster가 없다) — 본인은 끝까지 모른다.
+   */
+  muted: z.boolean(),
 });
 export type RosterEntry = z.infer<typeof RosterEntry>;
 

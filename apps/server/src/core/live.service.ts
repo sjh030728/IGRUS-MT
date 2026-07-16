@@ -220,6 +220,8 @@ export class LiveService implements OnModuleDestroy {
     const game = this.liveGame();
     // 지난 매치·시작 전 탭은 조용히 버린다 — 10Hz 채널에 거절 왕복을 달지 않는다.
     if (!m || !game || m.matchId !== matchId || m.phase !== 'ACTIVE') return;
+    // ★무음은 여기서도 성공한 척★ — 탭은 원래 ack가 없으니 그냥 안 세면 끝이다 (submit과 짝).
+    if (this.state.roster.get(pid)?.muted) return;
 
     const t = now();
     const acc = this.accountOf(m, pid, t);

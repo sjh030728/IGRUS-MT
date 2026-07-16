@@ -3,6 +3,7 @@ import { Subject } from 'rxjs';
 import {
   LEGAL_TRANSITIONS,
   ParticipantId,
+  SegmentId,
   SessionId,
   TeamId,
   type EpochMs,
@@ -10,7 +11,6 @@ import {
   type GameId,
   type LockRevealGame,
   type RoundPhase,
-  type SegmentId,
   type SubmissionRecord,
 } from '@mt/protocol';
 import { DbService } from './db.service.js';
@@ -69,6 +69,7 @@ export class RoundService implements OnModuleDestroy {
       roster: new Map(),
       entryOpen: true,
       program,
+      gamesCatalog: [...this.games.values()].map((g) => ({ gameId: g.gameId, title: g.title })),
       segment: null, // bootstrap의 start()가 첫 세그먼트에 들어가며 채운다
       round: null,
       match: null, // Live 세그먼트에서 LIVE_ARM이 채운다 (live.service — 엔진이 유일한 작성자)
@@ -339,6 +340,15 @@ export class RoundService implements OnModuleDestroy {
     if (!parsed.ok) return { ok: false, reason: 'INVALID', message: parsed.message };
 
     /**
+     * ★무음은 성공한 척한다★ (session.ts RosterEntry.muted)
+     * 에러를 주면 치터가 다른 폰으로 갈아탄다. ack는 정상, log엔 안 쌓인다 —
+     * 채점도 미터도 콜아웃도 이 사람을 못 본다. 해제는 사회자만 (MUTE_PARTICIPANT).
+     */
+    if (person.muted) {
+      return { ok: true, at: now(), accepted: parsed.value, ...(r.scope === 'TEAM' ? { by: person.name } : {}) };
+    }
+
+    /**
      * 잠금까진 덮어쓰기. ★이력은 남긴다★ — 번복 횟수가 리액션의 재료다.
      *
      * ★세는 단위가 scope를 따른다★ game.ts가 원하는 리액션은
@@ -364,8 +374,21 @@ export class RoundService implements OnModuleDestroy {
 
   // ── 로스터 ─────────────────────────────────────────────────
 
-  join(pid: ParticipantId, name: string, teamId: TeamId): void {
-    this.state.roster.set(pid, { participantId: pid, teamId, name, connected: true, lastSeen: now() });
+  /**
+   * ★teamId가 없으면 기존 배정을 유지한다★ (단계 4에서 고침 — events.ts PlayHello)
+   * 원래는 무조건 덮어써서, 배터리 재접속마다 조가 1조로 리셋되는 실전 버그였다.
+   * muted도 유지 — 재접속이 무음 해제 뒷문이 되면 안 된다.
+   */
+  join(pid: ParticipantId, name: string, teamId: TeamId | null): void {
+    const prev = this.state.roster.get(pid);
+    this.state.roster.set(pid, {
+      participantId: pid,
+      teamId: teamId ?? prev?.teamId ?? this.state.teams[0]!.teamId,
+      name,
+      connected: true,
+      lastSeen: now(),
+      muted: prev?.muted ?? false,
+    });
     this.bump();
   }
 
@@ -374,6 +397,47 @@ export class RoundService implements OnModuleDestroy {
     if (!e) return;
     this.state.roster.set(pid, { ...e, connected, lastSeen: now() });
     this.bump();
+  }
+
+  /** ★절대 자동으로 안 걸린다. 사회자만 누른다★ (anticheat.ts) */
+  setMuted(pid: ParticipantId, muted: boolean): boolean {
+    const e = this.state.roster.get(pid);
+    if (!e) return false;
+    this.state.roster.set(pid, { ...e, muted });
+    this.bump();
+    return true;
+  }
+
+  /** 조 재배정. 본인 선택(폰 로비)의 보정용 — 40명 배정은 콘솔이 아니라 본인이 한다. */
+  assign(pid: ParticipantId, teamId: TeamId): boolean {
+    const e = this.state.roster.get(pid);
+    if (!e || !this.state.teams.some((t) => t.teamId === teamId)) return false;
+    this.state.roster.set(pid, { ...e, teamId });
+    this.bump();
+    return true;
+  }
+
+  /**
+   * 예비 게임 즉시 투입 (CLAUDE.md 콘솔 필수기능). 프로그램에 세그먼트를 ★추가만★ 한다 —
+   * 진행 중인 세그먼트는 건드리지 않으므로 라운드/매치 상태와 무관하게 언제든 합법이다.
+   */
+  inject(gameId: string, after?: string): NavResult {
+    const game = [...this.games.values()].find((g) => g.gameId === gameId);
+    if (!game) return { ok: false, message: `등록 안 된 게임: ${gameId}` };
+
+    const anchor = after ?? this.state.segment?.def.segmentId;
+    const at = this.state.program.findIndex((s) => s.segmentId === anchor);
+    const n = this.state.program.filter((s) => s.segmentId.startsWith('inj-')).length + 1;
+    const def = {
+      segmentId: SegmentId.parse(`inj-${n}`),
+      kind: 'GAME' as const,
+      title: `${game.title} (투입)`,
+      gameId: game.gameId,
+    };
+    // anchor가 없으면(부팅 직후 등) 끝에 붙인다 — 투입이 실패하는 것보단 낫다.
+    this.state.program.splice(at < 0 ? this.state.program.length : at + 1, 0, def);
+    this.bump();
+    return { ok: true };
   }
 
   // ── 내부 ───────────────────────────────────────────────────

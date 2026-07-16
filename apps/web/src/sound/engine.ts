@@ -1,3 +1,4 @@
+import type { SfxCue } from '@mt/protocol';
 import { serverNow } from '../socket.js';
 
 /**
@@ -219,6 +220,129 @@ class SoundEngine {
   /** phase가 바뀌면 예약을 무효화한다. 다음 phase가 자기 걸 새로 잡는다. */
   resetSchedule(): void {
     this.scheduledKey = '';
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 사운드보드 (단계 4). 사회자가 손으로 누르는 5종 — 리액션 8분을 덮는 유일한 도구.
+  //
+  // ★이것도 합성이다★ 원래 "진짜 음원이 낫다"고 적어뒀지만(위 헤더), 음원 파일은
+  // 인터넷에서 받아야 하고 그건 오프라인 LAN 원칙과 개발 경로 양쪽에 없다.
+  // 합성 5종을 기본으로 깔고, 리허설에서 부족하면 그때 파일을 드롭인한다 —
+  // 이 메서드들만 <audio> 재생으로 바꾸면 되고 계약(SfxCue)은 안 변한다.
+  //
+  // phase 파생음과 달리 예약·취소가 없다 — 일회성 원샷이라 bucket을 안 탄다.
+  // ─────────────────────────────────────────────────────────
+
+  sfx(cue: SfxCue): void {
+    if (!this.ctx) return;
+    switch (cue) {
+      case 'DRUMROLL': return this.sfxDrumroll();
+      case 'BOO': return this.sfxBoo();
+      case 'APPLAUSE': return this.sfxApplause();
+      case 'CRICKETS': return this.sfxCrickets();
+      case 'AIRHORN': return this.sfxAirhorn();
+    }
+  }
+
+  /** 노이즈 한 방. 스네어(드럼롤)와 박수(어플로즈)의 공통 재료다. */
+  private noiseBurst(at: number, dur: number, gain: number, freq: number, q = 1): void {
+    const ctx = this.ctx!;
+    const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = freq;
+    bp.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(gain, at + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    src.connect(bp).connect(g).connect(this.master!);
+    src.start(at);
+  }
+
+  /** 두구두구 1.6초 — 점점 크게. 스네어 연타의 크레셴도가 긴장의 문법이다. */
+  private sfxDrumroll(): void {
+    const t0 = this.ctx!.currentTime + 0.02;
+    for (let i = 0; i < 38; i++) {
+      const p = i / 38;
+      this.noiseBurst(t0 + i * 0.042, 0.05, 0.09 + p * 0.28, 1300, 0.9);
+      this.ping(t0 + i * 0.042, 170, 0.04, 0.05 + p * 0.1, 'sine');
+    }
+  }
+
+  /** 야유 "우——". 톱니 3성부가 낮게 내려앉는다 + 비브라토 = 군중 모음. */
+  private sfxBoo(): void {
+    const ctx = this.ctx!;
+    const at = ctx.currentTime + 0.02;
+    for (const [base, pan] of [[196, 0.9], [220, 1.0], [247, 0.8]] as const) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(base, at);
+      osc.frequency.exponentialRampToValueAtTime(base * 0.78, at + 1.2); // 내려앉음 = 실망
+      const vib = ctx.createOscillator();
+      const vibG = ctx.createGain();
+      vib.frequency.value = 5.5;
+      vibG.gain.value = base * 0.02;
+      vib.connect(vibG).connect(osc.frequency);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 620; // "우" 모음의 자리
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(0.16 * pan, at + 0.12);
+      g.gain.setValueAtTime(0.16 * pan, at + 0.85);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 1.3);
+      osc.connect(lp).connect(g).connect(this.master!);
+      osc.start(at); osc.stop(at + 1.35);
+      vib.start(at); vib.stop(at + 1.35);
+    }
+  }
+
+  /** 박수 1.8초 — 랜덤 타이밍의 짧은 노이즈들. 규칙적이면 기계고, 흩어져야 군중이다. */
+  private sfxApplause(): void {
+    const t0 = this.ctx!.currentTime + 0.02;
+    for (let i = 0; i < 70; i++) {
+      const t = t0 + Math.random() * 1.6;
+      const fade = 1 - (t - t0) / 2.0; // 뒤로 갈수록 잦아든다
+      this.noiseBurst(t, 0.02, 0.12 * fade, 2200 + Math.random() * 1600, 1.6);
+    }
+  }
+
+  /** 귀뚜라미 — 썰렁할 때. 4.2kHz 펄스 묶음(치르르) × 3. */
+  private sfxCrickets(): void {
+    const t0 = this.ctx!.currentTime + 0.05;
+    for (const chirpAt of [0, 0.45, 0.9]) {
+      for (let i = 0; i < 6; i++) {
+        this.ping(t0 + chirpAt + i * 0.028, 4200, 0.016, 0.12, 'sine');
+      }
+    }
+  }
+
+  /** 에어혼 — 스타디움 문법. 살짝 디튠된 톱니 스택이 위로 감아올라간다. */
+  private sfxAirhorn(): void {
+    const ctx = this.ctx!;
+    const at = ctx.currentTime + 0.02;
+    for (const det of [0.99, 1.0, 1.012]) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(392 * det, at);
+      osc.frequency.exponentialRampToValueAtTime(440 * det, at + 0.09); // 특유의 "밤—↑"
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 3200;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(0.22, at + 0.02);
+      g.gain.setValueAtTime(0.22, at + 0.75);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.95);
+      osc.connect(lp).connect(g).connect(this.master!);
+      osc.start(at); osc.stop(at + 1);
+    }
   }
 }
 

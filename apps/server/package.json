@@ -10,6 +10,7 @@
     "dev": "tsc -w -p tsconfig.json",
     "verify": "node verify-loop.mjs",
     "verify:live": "node verify-live.mjs",
+    "verify:console": "node verify-console.mjs",
     "db:seed": "node db/seed.mjs",
     "db:seed:example": "node db/seed.mjs db/quiz.questions.example.json"
   },

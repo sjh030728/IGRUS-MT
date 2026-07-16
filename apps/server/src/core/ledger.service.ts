@@ -63,6 +63,34 @@ export class LedgerService implements OnModuleInit {
     return this.entries;
   }
 
+  // ── 콘솔 점수 도구 3종 (단계 4). 전부 기입일 뿐이다 — UPDATE도 DELETE도 없다 ──
+
+  /** 낮 야외 PG 점수. ★유일한 set 의미★ — 오타 나면 그냥 다시 입력한다 (ledger.ts SeedEntry). */
+  seedSet(totals: Record<string, number>, note?: string): void {
+    this.append({ kind: 'SEED', sessionId: this.sessionId, at: Date.now(), by: 'HOST', totals, ...(note !== undefined ? { note } : {}) });
+  }
+
+  /** 점수 수동 보정. 번역 릴레이 채점도, 치터 감점도 전부 이것. reason 필수는 계약이 강제한다. */
+  adjust(deltas: Record<string, number>, reason: string): void {
+    this.append({ kind: 'ADJUST', sessionId: this.sessionId, at: Date.now(), by: 'HOST', deltas, reason });
+  }
+
+  /**
+   * 되감기. 삭제가 아니라 VOID 기입 추가 — 빔에 점수가 ★내려가는 게 보인다★ (연출 선택).
+   * 검증이 여기 사는 이유: 원장 내용을 아는 건 원장뿐이다.
+   */
+  voidSeq(seq: number, reason: string): { ok: true } | { ok: false; message: string } {
+    const target = this.entries.find((e) => e.seq === seq);
+    if (!target) return { ok: false, message: `기입 #${seq} 없음` };
+    if (target.kind === 'SEED') return { ok: false, message: 'SEED는 되감기 대상이 아니다 — 다시 입력해서 덮는다' };
+    if (target.kind === 'VOID') return { ok: false, message: 'VOID의 VOID 금지 — 살리려면 같은 내용을 새로 기입' };
+    if (this.entries.some((e) => e.kind === 'VOID' && e.voidsSeq === seq)) {
+      return { ok: false, message: `#${seq}은 이미 무효` }; // 두 번 무효 = 장부 소음. 멱등이 아니라 거절이다
+    }
+    this.append({ kind: 'VOID', sessionId: this.sessionId, at: Date.now(), by: 'HOST', voidsSeq: seq, reason });
+    return { ok: true };
+  }
+
   /** 콘솔의 되감기 UI가 여기서 seq를 고른다. */
   tail(n: number): readonly LedgerEntry[] {
     return this.entries.slice(-n);

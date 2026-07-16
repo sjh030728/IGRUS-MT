@@ -53,11 +53,22 @@ export const Ack = <T extends z.ZodTypeAny>(data: T) =>
 // 폰 → 서버
 // ─────────────────────────────────────────────────────────────
 
-/** QR 접속 후 첫 인사. resumeToken이 있으면 신원 복구, 없으면 신규. */
+/**
+ * QR 접속 후 첫 인사. resumeToken이 있으면 신원 복구, 없으면 신규.
+ *
+ * ★teamId를 다시 안 보내면 서버는 기존 배정을 유지한다★ (단계 4에서 고침)
+ * 원래는 없으면 1조로 깔았는데, 그러면 배터리 재접속마다 조가 1조로 리셋됐다 —
+ * 재접속은 위험목록의 실제 시나리오라 이게 실전 버그였다.
+ *
+ * claim: 콘솔이 발급한 입장 코드 (REISSUE_TOKEN). 폰이 죽어 남의 폰을 빌릴 때 —
+ * 빌린 폰의 localStorage엔 ★주인의 토큰★이 있어서 resumeToken 경로로는 남이 된다.
+ * 코드가 그 신원 우회로다: 코드 → 본인 pid + 새 resumeToken. 1회용.
+ */
 export const PlayHello = z.object({
   resumeToken: ResumeToken.optional(),
   name: z.string().min(1).max(20).optional(),
   teamId: TeamId.optional(),
+  claim: z.string().min(4).max(8).optional(),
 });
 export type PlayHello = z.infer<typeof PlayHello>;
 
@@ -280,6 +291,8 @@ export const HostSnapshot = z.object({
   legal: z.array(z.string()).readonly(),
   /** 프로그램 전체. SEGMENT_GOTO 버튼이 이걸로 그려진다. current가 지금 위치. */
   program: z.array(ProgramRow).readonly(),
+  /** 등록된 게임 전부. SEGMENT_INJECT(예비 투입)의 선택지 — 콘솔이 gameId를 타이핑하게 하지 않는다. */
+  games: z.array(z.object({ gameId: GameId, title: z.string() })).readonly(),
   /** 현재 세그먼트의 라운드 목록. ROUND_GOTO(라운드 스킵/점프)가 여기서 고른다. */
   segmentRounds: z.array(z.object({ roundId: RoundId, index: z.number().int().positive() })).readonly(),
   /**
@@ -377,7 +390,8 @@ export interface C2S {
   'display:status': (p: { audioUnlocked: boolean }) => void;
 
   'host:hello': (p: { token: string }, ack: (r: { ok: boolean; state?: HostSnapshot }) => void) => void;
-  'host:cmd': (p: HostCmd, ack: (r: { ok: true } | { ok: false; code: string; message: string }) => void) => void;
+  /** note: 명령이 사람에게 돌려줄 한 줄 (REISSUE_TOKEN의 입장 코드). 콘솔은 로그에 띄우면 된다. */
+  'host:cmd': (p: HostCmd, ack: (r: { ok: true; note?: string } | { ok: false; code: string; message: string }) => void) => void;
 
   /** 접속 시 1회. LAN이라 1~3ms면 한 번으로 충분하다. 카운트다운 정확도가 여기 걸려 있다. */
   'time:ping': (p: { t0: number }, ack: (r: { t0: number; t1: EpochMs }) => void) => void;
