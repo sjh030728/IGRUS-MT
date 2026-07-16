@@ -62,8 +62,11 @@ SELECT * FROM session_ledger WHERE session_id = 's1' ORDER BY seq;
 
 ## 이 프로젝트에서
 
-**★이 레포엔 DB 코드가 아직 한 줄도 없다★** 단계 0은 계약만 정의했다. 하지만 계약이
-DB를 이미 세 군데서 전제하고 있다.
+**★이 레포엔 DB 코드가 아직 한 줄도 없다★** 서버는 이미 있고 `LedgerService`가 그 자리에
+앉아 있는데 **메모리다.** 파일이 대놓고 적어놨다 — "★단계 1은 메모리다. Postgres는 단계 2★"
+(`apps/server/src/core/ledger.service.ts`).
+
+**그런데 계약이 DB를 이미 세 군데서 전제하고 있다.**
 
 ### 1. `ledger.ts` — 복구 절차가 이미 SQL로 적혀 있다
 

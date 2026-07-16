@@ -57,9 +57,11 @@ Postgres 16이 정확히 그 버전으로, 설정까지 똑같이 뜬다. 100번
 
 ## 이 프로젝트에서
 
-**★이 레포엔 Docker 파일이 하나도 없다★** `docker-compose.yml`도 `Dockerfile`도 없고,
-CLAUDE.md에 Docker라는 단어 자체가 없다. 지금은 `packages/protocol` 하나뿐이고
-DB를 아직 안 붙였다.
+**★이 레포엔 Docker 파일이 하나도 없다★** `docker-compose.yml`도 `Dockerfile`도 없다.
+
+그런데 CLAUDE.md는 **이미 정해뒀다** — "DB: PostgreSQL (문제 은행 + 결과 아카이브 전용).
+**로컬은 Docker 컨테이너로**". **결정만 있고 파일이 없는 상태다.** DB를 아직 안 붙였기
+때문이다 — 계약과 리빌 루프가 먼저였다.
 
 붙인다면 이렇게 생긴 파일이 하나 생길 것이다:
 

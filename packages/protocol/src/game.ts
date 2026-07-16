@@ -24,8 +24,7 @@ import type { RosterEntry, TeamInfo } from './session.js';
  * ★예외가 정확히 하나다: AnswerScope★ 저건 z.enum이고, 이 파일의 유일한 Zod다.
  * events.ts의 HostSnapshot이 `scope: AnswerScope`로 와이어에 싣기 때문이다.
  * 규칙은 "이 파일은 Zod 금지"가 아니라 ★"와이어를 건너는 것만 Zod"★이고, 여기서 그걸
- * 건너는 건 저거 하나다. (원래 이 문단이 "이 파일만 Zod가 아니라"로 시작했는데
- * :1이 `import { z }`라 첫 줄부터 거짓이었다. 결정은 맞았고 서술이 틀렸다.)
+ * 건너는 건 저거 하나다.
  *
  * 경계는 parseAnswer()다 — unknown이 들어와서 T가 나가는 그 지점이 검증이 사는 유일한 곳이고,
  * 거기서 게임 모듈이 자기 Zod 스키마를 쓴다.
@@ -157,7 +156,7 @@ export interface ScoreResult {
    * 원래 TReveal = unknown 이었는데 코어가 그걸 쓸 수가 없었다:
    *  - 빔이 받는 DisplayRoundView.content는 ContentChunks다. 빔은 DisplayChunk 말고
    *    그릴 줄 아는 게 없고, 그게 청크 예산(MAX_CONTENT_CHUNKS)의 존재 이유다
-   *  - Game 유니온이 제네릭을 지운다(LockRevealGame<unknown, unknown> — 0009). 코어가 보는
+   *  - Game 유니온이 제네릭을 지운다(LockRevealGame<unknown, unknown> — decisions/0001). 코어가 보는
    *    reveal은 unknown이 되고, unknown은 그릴 수가 없다
    *  - reveal은 와이어에 자기 표현이 없다 — content를 통하지 않으면 빔에 갈 경로가 없다
    * 즉 제네릭이면 게임이 낸 리빌을 띄울 방법이 없다. displayPrompt.content가 이미

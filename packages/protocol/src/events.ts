@@ -103,10 +103,7 @@ export type PlayTap = z.infer<typeof PlayTap>;
 
 /**
  * 사회자 명령 전부. ★명령마다 이벤트를 만들지 않는다. 이벤트 1개 + 유니온★
- *
- * (개수를 안 쓴다. 여기 "18개"라고 박혀 있었는데 ★한 번도 맞은 적이 없는 숫자였고★,
- *  learn.md 규칙 3의 예시가 그걸 베껴서 개념 노트 일곱 곳으로 번졌다. 멤버 수는 아래를
- *  세면 나온다 — 문서가 셀 일이 아니다.)
+ * (개수를 주석에 쓰지 않는다 — 세면 아래에서 나오고, 박아두면 반드시 썩는다.)
  *
  * 이유: 인증 검사 1곳, 감사 로그 1줄, phase 합법성 검증 1곳.
  * 명령을 추가한다는 건 유니온 멤버를 추가하는 것이지 게이트웨이 핸들러를 늘리는 게 아니다.
@@ -118,7 +115,7 @@ export const HostCmd = z.discriminatedUnion('c', [
   z.object({ c: z.literal('ROUND_PRESENT') }), // IDLE → PROMPT
   z.object({ c: z.literal('ROUND_OPEN') }), // PROMPT → COLLECT
   /**
-   * ★"5초 더!"(ROUND_EXTEND)가 여기 있었는데 뺐다. 다시 넣지 마라★ (0015)
+   * ★"5초 더!"(ROUND_EXTEND)가 여기 있었는데 뺐다. 다시 넣지 마라★ (decisions/0002)
    * CLAUDE.md 필수기능 6개 밖이었고 근거가 안 적혀 있었다. 그리고 성공 기준을 거스른다 —
    * "오디오가 죽는 구간은 게임 사이가 아니라 ★입력 대기 10초★다." 그 구간을 늘리는
    * 유일한 버튼이었다. 반대 방향(ROUND_LOCK 조기 컷)은 이미 SPACE에 있다.

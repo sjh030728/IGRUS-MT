@@ -58,7 +58,7 @@ export interface SessionState {
   segmentTitle: string;
   round: ActiveRound | null;
   /**
-   * ★모드가 아니라 오버라이드다★ 0005 참고.
+   * ★모드가 아니라 오버라이드다★ decisions/0002 참고.
    * 빔 모드는 세그먼트에서 파생되고, 이 플래그는 그 위에 덮인다.
    */
   blackout: boolean;

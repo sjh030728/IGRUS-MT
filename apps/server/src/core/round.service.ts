@@ -54,7 +54,7 @@ export class RoundService implements OnModuleDestroy {
     // ★틱 하나로 자동 전이 둘을 굴린다★
     // 틱은 매번 현재 endsAt을 다시 읽는다. phase마다 setTimeout을 걸면 endsAt이 바뀔 때
     // 재스케줄을 잊는 버그가 생기는데, 여기엔 그게 존재할 수가 없다.
-    // (원래 이 문장이 ROUND_EXTEND를 근거로 들었다. 그건 0015에서 빠졌고, 지금은
+    // (원래 이 문장이 ROUND_EXTEND를 근거로 들었다. 그건 decisions/0002에서 빠졌고, 지금은
     //  endsAt을 미는 명령이 아예 없다. 그래도 아래 ★가 진짜 이유라 틱은 그대로 둔다.)
     //
     // ★10ms인 이유: 이 간격이 그대로 COUNTDOWN_ZERO의 지연 상한이다★

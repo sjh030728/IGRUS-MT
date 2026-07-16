@@ -153,7 +153,7 @@ console.log('\n[6] 빔 청크 예산 (콘텐츠 ≤3)');
 const overBudget = seen.filter((s) => s.state.mode === 'ROUND' && s.state.round.content.length > 3);
 ok('예산을 넘긴 프레임이 0개', overBudget.length === 0);
 
-console.log('\n[7] 패닉 킬 (0005)');
+console.log('\n[7] 패닉 킬 (decisions/0002)');
 await cmd(host, { c: 'DISPLAY_BLACKOUT', on: true });
 ok('빔이 BLACK', phaseNow() === 'BLACK');
 await cmd(host, { c: 'DISPLAY_BLACKOUT', on: false });
