@@ -179,7 +179,6 @@ export class EventsGateway implements OnGatewayInit, OnGatewayConnection, OnGate
       case 'ROUND_COUNTDOWN': return this.rounds.countdown() ? done : reject('지금 못 누름');
       case 'ROUND_SCORE': return this.rounds.commitScore() ? done : reject('REVEAL에서만 커밋');
       case 'ROUND_ABORT': return this.rounds.abort() ? done : reject('지금 못 누름');
-      case 'ROUND_EXTEND': return this.rounds.extend(cmd.addMs) ? done : reject('COLLECT에서만');
       case 'ROUND_NEXT': await this.rounds.next(); await this.rounds.loadDummyRound(); return done;
       case 'SET_MULTIPLIER': return this.rounds.setMultiplier(cmd.m) ? done : reject('지금 못 바꿈');
       case 'SET_POINTS': return this.rounds.setPoints(cmd.basePoints) ? done : reject('IDLE..COLLECT 에서만');

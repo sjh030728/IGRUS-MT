@@ -113,7 +113,13 @@ export const HostCmd = z.discriminatedUnion('c', [
   // 문제당 5누름 × 8문제. 사회자는 마이크를 들고 있다. 어떤 버튼인지 고르게 하면 안 된다.
   z.object({ c: z.literal('ROUND_PRESENT') }), // IDLE → PROMPT
   z.object({ c: z.literal('ROUND_OPEN') }), // PROMPT → COLLECT
-  z.object({ c: z.literal('ROUND_EXTEND'), addMs: z.number().int().positive() }), // "5초 더!"
+  /**
+   * ★"5초 더!"(ROUND_EXTEND)가 여기 있었는데 뺐다. 다시 넣지 마라★ (0015)
+   * CLAUDE.md 필수기능 6개 밖이었고 근거가 안 적혀 있었다. 그리고 성공 기준을 거스른다 —
+   * "오디오가 죽는 구간은 게임 사이가 아니라 ★입력 대기 10초★다." 그 구간을 늘리는
+   * 유일한 버튼이었다. 반대 방향(ROUND_LOCK 조기 컷)은 이미 SPACE에 있다.
+   * 10초가 모자라면 잠그고 NO_SUBMIT 콜아웃으로 부른다 — 기다리는 게 아니라 부르는 게 답이다.
+   */
   z.object({ c: z.literal('ROUND_LOCK') }), // COLLECT → LOCKED (조기 컷)
   z.object({ c: z.literal('ROUND_COUNTDOWN') }), // LOCKED → COUNTDOWN
   z.object({ c: z.literal('ROUND_SCORE') }), // REVEAL → REACTION ★커밋 지점★

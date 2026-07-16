@@ -192,7 +192,6 @@ export function legalCommands(s: SessionState): string[] {
   if (can('ABORTED')) out.push('ROUND_ABORT');
   // ★REVEAL → REACTION 이 유일한 커밋 지점★
   if (r.phase === 'REVEAL') out.push('ROUND_SCORE');
-  if (r.phase === 'COLLECT') out.push('ROUND_EXTEND');
   // 커밋된 뒤에만 다음으로. 리액션은 사회자가 끊을 때까지 안 넘어간다.
   if (r.phase === 'REACTION' || r.phase === 'ABORTED') out.push('ROUND_NEXT');
 

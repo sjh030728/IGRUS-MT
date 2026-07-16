@@ -102,7 +102,8 @@ export function Host() {
             ))}
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-            <Btn on={can('ROUND_EXTEND')} onClick={() => send({ c: 'ROUND_EXTEND', addMs: 5000 })}>+5초</Btn>
+            {/* ★+5초는 없다. 일부러 없다★ (0015) — 사망 구간을 늘리는 버튼이었다.
+                10초가 모자라면 잠그고(SPACE) NO_SUBMIT 콜아웃으로 부른다. */}
             <Btn on={can('SET_MULTIPLIER')} onClick={() => send({ c: 'SET_MULTIPLIER', m: 2 })}>×2 켜기</Btn>
             <Btn on={can('SET_MULTIPLIER')} onClick={() => send({ c: 'SET_MULTIPLIER', m: 1 })}>×1</Btn>
             <Btn on onClick={() => send({ c: 'DISPLAY_BLACKOUT', on: snap.display.mode !== 'BLACK' })}>
